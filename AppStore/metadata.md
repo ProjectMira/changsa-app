@@ -16,7 +16,9 @@ Drokpo (གྲོགས་པོ་ — "friend") is where Tibetans meet: date, 
 
 ## Description
 
-Drokpo (གྲོགས་པོ་) means "friend" — and that's where everything good starts.
+Drokpo means "friend" in Tibetan — and that's where everything good starts.
+
+(Note: Apple rejects Tibetan script characters in the en-US description field, so the listing uses romanized text only.)
 
 Drokpo is a dating and friendship app made for the Tibetan community worldwide. Whether you're in Dharamshala or New York, Kathmandu or Zurich, Drokpo helps you find people who share your roots, your language, and your values.
 
@@ -34,7 +36,7 @@ Your location is only used to show you people within your chosen distance — it
 
 Drokpo is for adults 18 and over.
 
-Find your person. Find your people. ཐུགས་སྤྲོ་གནང་རོགས།
+Find your person. Find your people.
 
 ## Keywords (100 chars max)
 
