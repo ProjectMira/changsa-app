@@ -3,7 +3,7 @@ import FirebaseCore
 import GoogleSignIn
 
 @main
-struct ChangsaApp: App {
+struct DrokpoApp: App {
     @State private var session: SessionStore
 
     init() {
@@ -73,7 +73,7 @@ struct SetupNoticeView: View {
                 .foregroundStyle(.secondary)
             Text("Firebase not configured")
                 .font(.headline)
-            Text("Add GoogleService-Info.plist to Changsa/Resources and rebuild.")
+            Text("Add GoogleService-Info.plist to Drokpo/Resources and rebuild.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

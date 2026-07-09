@@ -5,6 +5,7 @@ struct ProfileView: View {
     @Environment(SessionStore.self) private var session
 
     @State private var showEditSheet = false
+    @State private var showSettings = false
     @State private var photoSelection: PhotosPickerItem?
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -16,13 +17,18 @@ struct ProfileView: View {
             List {
                 photosSection
                 aboutSection
+                socialsSection
                 preferencesSection
-                Section {
-                    Button("Sign out", role: .destructive) { session.signOut() }
-                }
             }
             .navigationTitle("Profile")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Edit") { showEditSheet = true }
                 }
@@ -33,6 +39,9 @@ struct ProfileView: View {
                         await session.refreshProfile()
                     }
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
             }
             .refreshable { await session.refreshProfile() }
             .overlay { if isWorking { ProgressView() } }
@@ -89,10 +98,23 @@ struct ProfileView: View {
             row("Age", profile?.age.map(String.init))
             row("Region", profile?.region)
             row("Languages", profile?.languages?.joined(separator: ", "))
+            row("Interests", profile?.interests?.joined(separator: ", "))
             row("Occupation", profile?.occupation)
             row("Education", profile?.education)
             if let bio = profile?.bio, !bio.isEmpty {
                 Text(bio).font(.subheadline)
+            }
+        }
+    }
+
+    private var socialsSection: some View {
+        Section("Socials") {
+            row("Instagram", profile?.socials?.instagram.map { "@\($0)" })
+            if let youtube = profile?.socials?.youtube, !youtube.isEmpty {
+                row("YouTube", youtube)
+            }
+            if let tiktok = profile?.socials?.tiktok, !tiktok.isEmpty {
+                row("TikTok", "@\(tiktok)")
             }
         }
     }
@@ -102,7 +124,6 @@ struct ProfileView: View {
             let preferences = profile?.preferences ?? Preferences()
             row("Age range", "\(preferences.ageMin)–\(preferences.ageMax)")
             row("Distance", "\(preferences.distanceKm) km")
-            row("Looking for", profile?.seekingGenders?.map(\.capitalized).joined(separator: ", "))
         }
     }
 
@@ -147,6 +168,98 @@ struct ProfileView: View {
     }
 }
 
+// MARK: - Settings
+
+struct SettingsView: View {
+    @Environment(SessionStore.self) private var session
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
+
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(version) (\(build))"
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("About") {
+                    Link(destination: AppConfig.privacyPolicyURL) {
+                        HStack {
+                            Text("Privacy policy")
+                            Spacer()
+                            Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(appVersion).foregroundStyle(.secondary)
+                    }
+                }
+                Section("Account") {
+                    Button("Sign out") {
+                        dismiss()
+                        session.signOut()
+                    }
+                    Button("Delete account", role: .destructive) {
+                        showDeleteConfirmation = true
+                    }
+                    .disabled(isDeleting)
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .overlay { if isDeleting { ProgressView() } }
+            .confirmationDialog(
+                "Delete your account?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete everything", role: .destructive) {
+                    Task { await deleteAccount() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your profile, photos, likes, and matches will be permanently removed. This cannot be undone.")
+            }
+            .alert("Couldn't delete account", isPresented: .init(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    private func deleteAccount() async {
+        isDeleting = true
+        defer { isDeleting = false }
+        do {
+            let _: EmptyResponse = try await APIClient.shared.delete("/api/profile/me")
+            // The backend already deleted the Firebase Auth user; signing out
+            // clears the now-invalid local session.
+            dismiss()
+            session.signOut()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Edit profile
+
 struct EditProfileView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -156,7 +269,10 @@ struct EditProfileView: View {
     @State private var education: String
     @State private var region: String
     @State private var languages: Set<String>
-    @State private var seekingGenders: Set<String>
+    @State private var interests: Set<String>
+    @State private var instagram: String
+    @State private var youtube: String
+    @State private var tiktok: String
     @State private var ageRange: ClosedRange<Double>
     @State private var distanceKm: Double
 
@@ -172,11 +288,18 @@ struct EditProfileView: View {
         _education = State(initialValue: profile.education ?? "")
         _region = State(initialValue: profile.region ?? "")
         _languages = State(initialValue: Set(profile.languages ?? []))
-        _seekingGenders = State(initialValue: Set(profile.seekingGenders ?? []))
+        _interests = State(initialValue: Set(profile.interests ?? []))
+        _instagram = State(initialValue: profile.socials?.instagram ?? "")
+        _youtube = State(initialValue: profile.socials?.youtube ?? "")
+        _tiktok = State(initialValue: profile.socials?.tiktok ?? "")
         let preferences = profile.preferences ?? Preferences()
         _ageRange = State(initialValue: Double(preferences.ageMin)...Double(preferences.ageMax))
         _distanceKm = State(initialValue: Double(preferences.distanceKm))
         self.onSaved = onSaved
+    }
+
+    private var trimmedInstagram: String {
+        instagram.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "")
     }
 
     var body: some View {
@@ -191,6 +314,15 @@ struct EditProfileView: View {
                         ForEach(Vocabulary.regions, id: \.self) { Text($0).tag($0) }
                     }
                 }
+                Section {
+                    socialField("Instagram", text: $instagram)
+                    socialField("YouTube", text: $youtube)
+                    socialField("TikTok", text: $tiktok)
+                } header: {
+                    Text("Socials")
+                } footer: {
+                    Text("Instagram is required.")
+                }
                 Section("Languages") {
                     ForEach(Vocabulary.languages, id: \.self) { language in
                         toggleRow(language, isOn: languages.contains(language)) {
@@ -198,10 +330,10 @@ struct EditProfileView: View {
                         }
                     }
                 }
-                Section("Looking for") {
-                    ForEach(Vocabulary.genders, id: \.self) { gender in
-                        toggleRow(gender.capitalized, isOn: seekingGenders.contains(gender)) {
-                            toggle(&seekingGenders, gender)
+                Section("Interests") {
+                    ForEach(Vocabulary.interests, id: \.self) { interest in
+                        toggleRow(interest, isOn: interests.contains(interest)) {
+                            toggle(&interests, interest)
                         }
                     }
                 }
@@ -224,7 +356,11 @@ struct EditProfileView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { Task { await save() } }
-                        .disabled(isSaving || displayName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(
+                            isSaving
+                                || displayName.trimmingCharacters(in: .whitespaces).isEmpty
+                                || trimmedInstagram.isEmpty
+                        )
                 }
             }
             .alert("Couldn't save", isPresented: .init(
@@ -235,6 +371,16 @@ struct EditProfileView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
+        }
+    }
+
+    private func socialField(_ title: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(title)
+            TextField("handle", text: text)
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
         }
     }
 
@@ -262,7 +408,12 @@ struct EditProfileView: View {
             education: education,
             region: region,
             languages: Array(languages),
-            seekingGenders: Array(seekingGenders),
+            interests: Array(interests),
+            socials: Socials(
+                instagram: trimmedInstagram,
+                youtube: youtube.trimmingCharacters(in: .whitespaces),
+                tiktok: tiktok.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "")
+            ),
             preferences: Preferences(
                 ageMin: Int(ageRange.lowerBound),
                 ageMax: Int(ageRange.upperBound),

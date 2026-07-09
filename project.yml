@@ -1,6 +1,6 @@
-name: Changsa
+name: Drokpo
 options:
-  bundleIdPrefix: app.changsa
+  bundleIdPrefix: app.drokpo
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -14,21 +14,23 @@ packages:
     from: "8.0.0"
 
 targets:
-  Changsa:
+  Drokpo:
     type: application
     platform: iOS
     sources:
-      - Changsa
+      - Drokpo
     dependencies:
       - package: Firebase
         product: FirebaseAuth
+      - package: Firebase
+        product: FirebaseFirestore
       - package: Firebase
         product: FirebaseStorage
       - package: GoogleSignIn
         product: GoogleSignIn
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.changsa.ios
+        PRODUCT_BUNDLE_IDENTIFIER: app.drokpo.ios
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: 1
         TARGETED_DEVICE_FAMILY: "1"
@@ -40,23 +42,23 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         # REVERSED_CLIENT_ID from GoogleService-Info.plist, used as the Google sign-in redirect URL scheme.
-        GOOGLE_REVERSED_CLIENT_ID: com.googleusercontent.apps.105130875319-vmti5vuqsks8v26505fgms8t0r716de6
+        GOOGLE_REVERSED_CLIENT_ID: com.googleusercontent.apps.246225694981-ern5vh2rgijmht2bkubvbg232mlkfnpp
     info:
-      path: Changsa/Info.plist
+      path: Drokpo/Info.plist
       properties:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSLocationWhenInUseUsageDescription: "Changsa uses your location to show you people nearby."
-        NSPhotoLibraryUsageDescription: "Changsa needs access to your photos so you can add them to your profile."
-        CFBundleDisplayName: Changsa
+        NSLocationWhenInUseUsageDescription: "Drokpo uses your location to show you people nearby."
+        NSPhotoLibraryUsageDescription: "Drokpo needs access to your photos so you can add them to your profile."
+        CFBundleDisplayName: Drokpo
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_REVERSED_CLIENT_ID)
     entitlements:
-      path: Changsa/Changsa.entitlements
+      path: Drokpo/Drokpo.entitlements
       properties:
         com.apple.developer.applesignin:
           - Default

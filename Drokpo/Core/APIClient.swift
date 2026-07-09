@@ -56,7 +56,7 @@ final class APIClient {
         guard let user = Auth.auth().currentUser else { throw APIError.notAuthenticated }
         let token = try await user.getIDToken()
         #if DEBUG
-        print("CHANGSA_DEBUG_TOKEN: \(token)")
+        print("DROKPO_DEBUG_TOKEN: \(token)")
         #endif
 
         var components = URLComponents(

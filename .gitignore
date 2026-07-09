@@ -10,7 +10,7 @@ build/
 .swiftpm/
 
 # Firebase secrets
-Changsa/Resources/GoogleService-Info.plist
+Drokpo/Resources/GoogleService-Info.plist
 
 # macOS
 .DS_Store

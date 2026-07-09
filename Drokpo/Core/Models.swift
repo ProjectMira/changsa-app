@@ -15,6 +15,17 @@ struct Preferences: Codable, Equatable {
     var distanceKm: Int = 50
 }
 
+/// Social handles. Instagram is the one handle every profile must have; the
+/// backend rejects onboarding without it and never lets it be cleared.
+struct Socials: Codable, Equatable {
+    var instagram: String?
+    var youtube: String?
+    var tiktok: String?
+    var facebook: String?
+    var x: String?
+    var wechat: String?
+}
+
 struct Photo: Codable, Equatable, Identifiable, Hashable {
     var storagePath: String
     var order: Int?
@@ -28,12 +39,13 @@ struct Profile: Codable, Equatable, Identifiable {
     var displayName: String?
     var dob: String?
     var gender: String?
-    var seekingGenders: [String]?
     var bio: String?
     var occupation: String?
     var education: String?
     var region: String?
     var languages: [String]?
+    var interests: [String]?
+    var socials: Socials?
     var photos: [Photo]?
     var preferences: Preferences?
     var onboardingComplete: Bool?
@@ -62,6 +74,8 @@ struct FeedCard: Codable, Equatable, Identifiable {
     var bio: String?
     var occupation: String?
     var languages: [String]?
+    var interests: [String]?
+    var socials: Socials?
     var photos: [Photo]?
     var distanceKm: Double?
 
@@ -74,12 +88,36 @@ struct FeedCard: Codable, Equatable, Identifiable {
     }
 }
 
+struct LastMessage: Codable, Equatable {
+    var text: String?
+    var senderId: String?
+}
+
 struct Match: Codable, Equatable, Identifiable {
     var matchId: String?
+    var users: [String]?
+    var status: String?
     var otherUser: FeedCard?
+    var lastMessage: LastMessage?
+    var unreadCount: [String: Int]?
     var createdAt: String?
 
     var id: String { matchId ?? otherUser?.uid ?? UUID().uuidString }
+
+    func unread(for uid: String?) -> Int {
+        guard let uid else { return 0 }
+        return unreadCount?[uid] ?? 0
+    }
+}
+
+/// One entry from GET /api/swipes or GET /api/swipes/received.
+struct SwipeEntry: Codable, Equatable, Identifiable {
+    var uid: String?
+    var action: String?
+    var createdAt: String?
+    var otherUser: FeedCard?
+
+    var id: String { uid ?? otherUser?.uid ?? UUID().uuidString }
 }
 
 struct SwipeResult: Codable {
@@ -127,11 +165,12 @@ struct TolerantList<Element: Decodable>: Decodable {
 struct OnboardingIn: Encodable {
     var displayName: String
     var dob: String
-    var gender: String
-    var seekingGenders: [String]
+    var gender: String?
     var bio: String
     var region: String
     var languages: [String]
+    var interests: [String]
+    var socials: Socials
     var location: GeoLocation
     var preferences: Preferences
 }
@@ -148,7 +187,8 @@ struct ProfileUpdate: Encodable {
     var education: String?
     var region: String?
     var languages: [String]?
-    var seekingGenders: [String]?
+    var interests: [String]?
+    var socials: Socials?
     var preferences: Preferences?
 }
 
@@ -158,6 +198,10 @@ struct SwipeIn: Encodable {
 
 enum SwipeAction: String, Encodable {
     case like, pass, superlike
+}
+
+struct MessageIn: Encodable {
+    var text: String
 }
 
 struct ReportIn: Encodable {
@@ -176,6 +220,11 @@ enum Vocabulary {
         "North America", "Europe", "Australia", "Other",
     ]
     static let languages = ["Tibetan", "English", "Hindi", "Nepali", "Mandarin", "French", "German", "Other"]
+    static let interests = [
+        "Momo cooking", "Gorshey", "Hiking", "Music", "Photography",
+        "Reading", "Meditation", "Thangka painting", "Basketball", "Soccer",
+        "Movies", "Travel", "Board games", "Volunteering",
+    ]
     static let reportReasons = ["Fake profile", "Inappropriate photos", "Harassment", "Spam", "Underage", "Other"]
 
     /// Rough fallback coordinates per region for users who decline location access.

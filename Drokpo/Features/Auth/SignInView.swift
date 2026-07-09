@@ -13,7 +13,7 @@ struct SignInView: View {
                 Image(systemName: "heart.circle.fill")
                     .font(.system(size: 72))
                     .foregroundStyle(.tint)
-                Text("Changsa")
+                Text("Drokpo")
                     .font(.largeTitle.bold())
                 Text("Find your person in the Tibetan community")
                     .font(.subheadline)
@@ -51,7 +51,7 @@ struct SignInView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Text("You must be 18 or older to use Changsa.")
+                Text("You must be 18 or older to use Drokpo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

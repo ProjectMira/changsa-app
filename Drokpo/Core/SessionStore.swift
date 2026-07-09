@@ -11,6 +11,10 @@ final class SessionStore {
     var myProfile: Profile?
     var lastError: String?
 
+    /// Firebase Auth uid of the signed-in user; used for Firestore chat
+    /// queries and unread counts.
+    var uid: String? { Auth.auth().currentUser?.uid }
+
     private var authListener: AuthStateDidChangeListenerHandle?
 
     init() {

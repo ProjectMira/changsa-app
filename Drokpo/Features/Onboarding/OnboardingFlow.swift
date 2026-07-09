@@ -17,8 +17,8 @@ struct OnboardingFlow: View {
                 Group {
                     switch model.step {
                     case .basics: BasicsStep(model: model)
-                    case .seeking: SeekingStep(model: model)
                     case .details: DetailsStep(model: model)
+                    case .socials: SocialsStep(model: model)
                     case .location: LocationStep(model: model)
                     case .photos: PhotosStep(model: model)
                     }
@@ -101,20 +101,22 @@ private struct BasicsStep: View {
     }
 }
 
-private struct SeekingStep: View {
+private struct SocialsStep: View {
     @Bindable var model: OnboardingModel
 
     var body: some View {
         Form {
-            Section("I'm looking for") {
-                ForEach(Vocabulary.genders, id: \.self) { gender in
-                    MultiSelectRow(
-                        title: gender.capitalized,
-                        isSelected: model.seekingGenders.contains(gender)
-                    ) {
-                        model.seekingGenders.toggle(gender)
-                    }
+            Section {
+                HStack {
+                    Text("@").foregroundStyle(.secondary)
+                    TextField("your_handle", text: $model.instagram)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                 }
+            } header: {
+                Text("Instagram")
+            } footer: {
+                Text("Required — your Instagram is how new friends verify you're a real person.")
             }
             Section {
                 Toggle(isOn: $model.acceptedTerms) {
@@ -144,6 +146,16 @@ private struct DetailsStep: View {
                         isSelected: model.languages.contains(language)
                     ) {
                         model.languages.toggle(language)
+                    }
+                }
+            }
+            Section("Interests") {
+                ForEach(Vocabulary.interests, id: \.self) { interest in
+                    MultiSelectRow(
+                        title: interest,
+                        isSelected: model.interests.contains(interest)
+                    ) {
+                        model.interests.toggle(interest)
                     }
                 }
             }

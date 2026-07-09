@@ -4,7 +4,7 @@ import SwiftUI
 @Observable
 final class OnboardingModel {
     enum Step: Int, CaseIterable {
-        case basics, seeking, details, location, photos
+        case basics, details, socials, location, photos
     }
 
     var step: Step = .basics
@@ -14,14 +14,15 @@ final class OnboardingModel {
     var dob = Calendar.current.date(byAdding: .year, value: -25, to: .now)!
     var gender = ""
 
-    // Seeking
-    var seekingGenders: Set<String> = []
-    var acceptedTerms = false
-
     // Details
     var region = ""
     var languages: Set<String> = []
+    var interests: Set<String> = []
     var bio = ""
+
+    // Socials
+    var instagram = ""
+    var acceptedTerms = false
 
     // Location
     var location: GeoLocation?
@@ -39,14 +40,19 @@ final class OnboardingModel {
         Calendar.current.date(byAdding: .year, value: -18, to: .now)!
     }
 
+    var trimmedInstagram: String {
+        instagram.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "")
+    }
+
     var canAdvance: Bool {
         switch step {
         case .basics:
             return !displayName.trimmingCharacters(in: .whitespaces).isEmpty && !gender.isEmpty
-        case .seeking:
-            return !seekingGenders.isEmpty && acceptedTerms
         case .details:
             return !region.isEmpty && !languages.isEmpty
+        case .socials:
+            // Instagram is the one social the backend requires on every profile.
+            return !trimmedInstagram.isEmpty && acceptedTerms
         case .location:
             return true // falls back to region coordinates
         case .photos:
@@ -80,11 +86,12 @@ final class OnboardingModel {
         let body = OnboardingIn(
             displayName: displayName.trimmingCharacters(in: .whitespaces),
             dob: Profile.dobFormatter.string(from: dob),
-            gender: gender,
-            seekingGenders: Array(seekingGenders),
+            gender: gender.isEmpty ? nil : gender,
             bio: bio,
             region: region,
             languages: Array(languages),
+            interests: Array(interests),
+            socials: Socials(instagram: trimmedInstagram),
             location: location ?? Vocabulary.regionCoordinates[region] ?? GeoLocation(lat: 0, lng: 0),
             preferences: Preferences()
         )
