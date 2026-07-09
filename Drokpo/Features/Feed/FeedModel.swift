@@ -77,6 +77,7 @@ final class FeedModel {
         Task {
             do {
                 let _: EmptyResponse = try await APIClient.shared.post("/api/blocks/\(card.uid)")
+                BlockStore.shared.record(uid: card.uid, displayName: card.displayName)
             } catch {
                 errorMessage = error.localizedDescription
             }

@@ -128,6 +128,29 @@ struct SwipeResult: Codable {
     var isMatch: Bool { matched ?? (matchId != nil || match != nil) }
 }
 
+/// One entry from GET /api/messages/sent.
+struct SentMessage: Codable, Equatable, Identifiable {
+    var messageId: String?
+    var matchId: String?
+    var senderId: String?
+    var text: String?
+    var createdAt: String?
+
+    var id: String { messageId ?? UUID().uuidString }
+
+    var sentDate: Date? {
+        guard let createdAt else { return nil }
+        return Self.isoFormatter.date(from: createdAt) ?? Self.isoFractionalFormatter.date(from: createdAt)
+    }
+
+    private static let isoFormatter = ISO8601DateFormatter()
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
 /// The spec doesn't say whether list endpoints return a bare array or a wrapper
 /// object, so accept both shapes.
 struct TolerantList<Element: Decodable>: Decodable {
@@ -183,12 +206,15 @@ struct PhotoConfirm: Encodable {
 struct ProfileUpdate: Encodable {
     var displayName: String?
     var bio: String?
+    var dob: String?
+    var gender: String?
     var occupation: String?
     var education: String?
     var region: String?
     var languages: [String]?
     var interests: [String]?
     var socials: Socials?
+    var location: GeoLocation?
     var preferences: Preferences?
 }
 
@@ -202,6 +228,10 @@ enum SwipeAction: String, Encodable {
 
 struct MessageIn: Encodable {
     var text: String
+}
+
+struct FcmTokenIn: Encodable {
+    var token: String
 }
 
 struct ReportIn: Encodable {

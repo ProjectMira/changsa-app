@@ -201,6 +201,10 @@ struct SettingsView: View {
                         Text(appVersion).foregroundStyle(.secondary)
                     }
                 }
+                Section("Privacy & activity") {
+                    NavigationLink("Blocked users") { BlockedUsersView() }
+                    NavigationLink("Messages you've sent") { SentMessagesView() }
+                }
                 Section("Account") {
                     Button("Sign out") {
                         dismiss()
@@ -258,6 +262,117 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - Blocked users
+
+struct BlockedUsersView: View {
+    @State private var store = BlockStore.shared
+    @State private var workingUid: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if store.blocked.isEmpty {
+                ContentUnavailableView(
+                    "No blocked users",
+                    systemImage: "hand.raised",
+                    description: Text("People you block from the feed will show up here.")
+                )
+            } else {
+                ForEach(store.blocked) { user in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(user.displayName ?? "Member")
+                            Text(user.blockedAt, style: .date)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Unblock") {
+                            Task { await unblock(user) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(workingUid != nil)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Blocked users")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Couldn't unblock", isPresented: .init(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func unblock(_ user: BlockedUser) async {
+        workingUid = user.uid
+        defer { workingUid = nil }
+        do {
+            try await BlockStore.shared.unblock(user)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Sent messages
+
+/// Recent messages you've sent across all conversations (GET /api/messages/sent).
+struct SentMessagesView: View {
+    @State private var messages: [SentMessage] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if let errorMessage {
+                Text(errorMessage).foregroundStyle(.secondary)
+            } else if messages.isEmpty && !isLoading {
+                ContentUnavailableView(
+                    "Nothing sent yet",
+                    systemImage: "paperplane",
+                    description: Text("Messages you send in your chats will show up here.")
+                )
+            } else {
+                ForEach(messages) { message in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(message.text ?? "")
+                            .lineLimit(3)
+                        if let date = message.sentDate {
+                            Text(date, format: .relative(presentation: .named))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Sent messages")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay { if isLoading { ProgressView() } }
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do {
+            let list: TolerantList<SentMessage> = try await APIClient.shared.get(
+                "/api/messages/sent",
+                query: [URLQueryItem(name: "limit", value: "100")]
+            )
+            messages = list.items
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+}
+
 // MARK: - Edit profile
 
 struct EditProfileView: View {
@@ -265,6 +380,8 @@ struct EditProfileView: View {
 
     @State private var displayName: String
     @State private var bio: String
+    @State private var gender: String
+    @State private var birthday: Date
     @State private var occupation: String
     @State private var education: String
     @State private var region: String
@@ -277,6 +394,9 @@ struct EditProfileView: View {
     @State private var distanceKm: Double
 
     @State private var isSaving = false
+    @State private var isLocating = false
+    @State private var locationStatus: String?
+    @State private var updatedLocation: GeoLocation?
     @State private var errorMessage: String?
 
     private let onSaved: () async -> Void
@@ -284,6 +404,8 @@ struct EditProfileView: View {
     init(profile: Profile, onSaved: @escaping () async -> Void) {
         _displayName = State(initialValue: profile.displayName ?? "")
         _bio = State(initialValue: profile.bio ?? "")
+        _gender = State(initialValue: profile.gender ?? "")
+        _birthday = State(initialValue: profile.dob.flatMap { Profile.dobFormatter.date(from: $0) } ?? .now)
         _occupation = State(initialValue: profile.occupation ?? "")
         _education = State(initialValue: profile.education ?? "")
         _region = State(initialValue: profile.region ?? "")
@@ -308,11 +430,37 @@ struct EditProfileView: View {
                 Section("About") {
                     TextField("Name", text: $displayName)
                     TextField("Bio", text: $bio, axis: .vertical).lineLimit(3...6)
+                    Picker("Gender", selection: $gender) {
+                        Text("Not set").tag("")
+                        ForEach(Vocabulary.genders, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    DatePicker(
+                        "Birthday",
+                        selection: $birthday,
+                        in: ...Calendar.current.date(byAdding: .year, value: -18, to: .now)!,
+                        displayedComponents: .date
+                    )
                     TextField("Occupation", text: $occupation)
                     TextField("Education", text: $education)
                     Picker("Region", selection: $region) {
                         ForEach(Vocabulary.regions, id: \.self) { Text($0).tag($0) }
                     }
+                }
+                Section {
+                    Button {
+                        Task { await refreshLocation() }
+                    } label: {
+                        HStack {
+                            Label("Update my location", systemImage: "location")
+                            Spacer()
+                            if isLocating { ProgressView() }
+                        }
+                    }
+                    .disabled(isLocating)
+                } header: {
+                    Text("Location")
+                } footer: {
+                    Text(locationStatus ?? "Your location decides who shows up in your feed. Update it after you move or travel.")
                 }
                 Section {
                     socialField("Instagram", text: $instagram)
@@ -398,12 +546,26 @@ struct EditProfileView: View {
         if set.contains(value) { set.remove(value) } else { set.insert(value) }
     }
 
+    private func refreshLocation() async {
+        isLocating = true
+        defer { isLocating = false }
+        let fetcher = LocationFetcher()
+        if let location = await fetcher.requestLocation() {
+            updatedLocation = location
+            locationStatus = "Location updated — save to apply."
+        } else {
+            locationStatus = "Couldn't get your location. Check location permissions in Settings."
+        }
+    }
+
     private func save() async {
         isSaving = true
         defer { isSaving = false }
         let body = ProfileUpdate(
             displayName: displayName.trimmingCharacters(in: .whitespaces),
             bio: bio,
+            dob: Profile.dobFormatter.string(from: birthday),
+            gender: gender.isEmpty ? nil : gender,
             occupation: occupation,
             education: education,
             region: region,
@@ -414,6 +576,7 @@ struct EditProfileView: View {
                 youtube: youtube.trimmingCharacters(in: .whitespaces),
                 tiktok: tiktok.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "")
             ),
+            location: updatedLocation,
             preferences: Preferences(
                 ageMin: Int(ageRange.lowerBound),
                 ageMax: Int(ageRange.upperBound),

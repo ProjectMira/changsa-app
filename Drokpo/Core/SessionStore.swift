@@ -27,6 +27,7 @@ final class SessionStore {
                 guard let self else { return }
                 if user == nil {
                     self.myProfile = nil
+                    BlockStore.shared.reset()
                     self.state = .signedOut
                 } else {
                     await self.refreshProfile()
@@ -41,6 +42,9 @@ final class SessionStore {
             let profile: Profile = try await APIClient.shared.get("/api/profile/me")
             myProfile = profile
             state = (profile.onboardingComplete ?? true) ? .active : .needsOnboarding
+            if state == .active {
+                PushService.shared.enable()
+            }
         } catch APIError.http(let status, _) where status == 404 {
             state = .needsOnboarding
         } catch {
@@ -50,6 +54,11 @@ final class SessionStore {
     }
 
     func signOut() {
-        try? Auth.auth().signOut()
+        Task {
+            // Detach this device from push notifications while the auth
+            // session is still valid, then sign out.
+            await PushService.shared.unregister()
+            try? Auth.auth().signOut()
+        }
     }
 }

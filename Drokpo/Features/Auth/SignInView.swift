@@ -10,8 +10,10 @@ struct SignInView: View {
             Spacer()
 
             VStack(spacing: 12) {
-                Image(systemName: "heart.circle.fill")
-                    .font(.system(size: 72))
+                Image("Logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 96)
                     .foregroundStyle(.tint)
                 Text("Drokpo")
                     .font(.largeTitle.bold())

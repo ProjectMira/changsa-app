@@ -26,6 +26,8 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseStorage
+      - package: Firebase
+        product: FirebaseMessaging
       - package: GoogleSignIn
         product: GoogleSignIn
     settings:
@@ -62,3 +64,6 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        # Push notifications for new matches/messages (backend Cloud Functions
+        # send via FCM). Xcode maps this to "production" in distribution builds.
+        aps-environment: development
