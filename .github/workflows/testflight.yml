@@ -1,0 +1,83 @@
+name: TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Required repo secrets:
+#   ASC_API_KEY_P8            — contents of AuthKey_K2J94LT633.p8 (App Manager role)
+#   GOOGLE_SERVICE_INFO_PLIST — contents of Drokpo/Resources/GoogleService-Info.plist
+env:
+  ASC_KEY_ID: K2J94LT633
+  ASC_ISSUER_ID: 740fa955-2ad0-4d4c-a447-c67f9c446977
+  # Build 1 was uploaded manually before CI existed, so CI numbering starts at
+  # run_number + 1. Raise this offset if the workflow is ever recreated and
+  # run_number resets below a build number already used on App Store Connect.
+  BUILD_NUMBER_OFFSET: 1
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write # pushes the version tag after a successful upload
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Restore secrets
+        run: |
+          printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > Drokpo/Resources/GoogleService-Info.plist
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_API_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+
+      - name: Compute version and build number
+        id: version
+        run: |
+          MARKETING_VERSION=$(sed -n 's/^ *MARKETING_VERSION: *"\(.*\)"/\1/p' project.yml)
+          BUILD_NUMBER=$((GITHUB_RUN_NUMBER + BUILD_NUMBER_OFFSET))
+          echo "marketing_version=$MARKETING_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Version $MARKETING_VERSION ($BUILD_NUMBER)"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive
+        run: |
+          xcodebuild \
+            -project Drokpo.xcodeproj \
+            -scheme Drokpo \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Drokpo.xcarchive \
+            CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }} \
+            archive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/Drokpo.xcarchive \
+            -exportOptionsPlist ci/exportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Tag release
+        run: |
+          TAG="v${{ steps.version.outputs.marketing_version }}-build.${{ steps.version.outputs.build_number }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "TestFlight build ${{ steps.version.outputs.build_number }}"
+          git push origin "$TAG"
