@@ -32,7 +32,33 @@ jobs:
         run: |
           printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > Drokpo/Resources/GoogleService-Info.plist
           mkdir -p ~/private_keys
-          printf '%s' "$ASC_API_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          KEY_PATH=~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+          # xcodebuild feeds the .p8 straight to CryptoKit, which rejects
+          # anything that isn't a pristine PEM with "invalidPEMDocument" —
+          # CRLF endings, collapsed/flattened newlines, a missing trailing
+          # newline, or a base64-wrapped secret all trip it. Normalise whatever
+          # form the secret is stored in into a canonical PEM.
+          raw="$(printf '%s' "$ASC_API_KEY_P8" | tr -d '\r')"
+          if ! printf '%s' "$raw" | grep -q 'BEGIN PRIVATE KEY'; then
+            # No PEM markers — assume the secret is a base64-encoded .p8 file.
+            raw="$(printf '%s' "$raw" | tr -d '[:space:]' | openssl base64 -d -A 2>/dev/null || true)"
+          fi
+          body="$(printf '%s' "$raw" \
+            | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' \
+            | tr -d '[:space:]')"
+          {
+            echo '-----BEGIN PRIVATE KEY-----'
+            printf '%s\n' "$body" | fold -w 64
+            echo '-----END PRIVATE KEY-----'
+          } > "$KEY_PATH"
+
+          # Fail early with a clear message if the result still isn't a usable
+          # key, instead of a cryptic CryptoKit error deep in the archive step.
+          if ! openssl pkey -in "$KEY_PATH" -noout 2>/dev/null; then
+            echo "::error::ASC_API_KEY_P8 could not be normalised into a valid App Store Connect .p8 key. Re-add the secret with the exact contents of AuthKey_${ASC_KEY_ID}.p8 (or its base64)."
+            exit 1
+          fi
         env:
           GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
           ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
