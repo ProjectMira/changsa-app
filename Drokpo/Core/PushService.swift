@@ -75,4 +75,19 @@ extension PushService: UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .badge]
     }
+
+    // Notification tap (including cold-start — the delegate is set at launch).
+    // FCM data payloads arrive as top-level keys in userInfo.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let userInfo = response.notification.request.content.userInfo
+        let type = userInfo["type"] as? String
+        let matchId = userInfo["matchId"] as? String
+        guard type != nil || matchId != nil else { return }
+        await MainActor.run {
+            DeepLinkRouter.shared.handle(type: type, matchId: matchId)
+        }
+    }
 }

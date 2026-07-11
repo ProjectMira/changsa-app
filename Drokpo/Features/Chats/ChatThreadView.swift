@@ -11,23 +11,41 @@ struct ChatMessage: Identifiable, Equatable {
 struct ChatThreadView: View {
     @Environment(SessionStore.self) private var session
     @Environment(ChatStore.self) private var chats
+    @Environment(\.dismiss) private var dismiss
 
-    let entry: ChatStore.Entry
+    let matchId: String
 
     @State private var messages: [ChatMessage] = []
     @State private var draft = ""
     @State private var isSending = false
     @State private var registration: ListenerRegistration?
     @State private var errorMessage: String?
+    @State private var showUnmatchConfirm = false
+    @State private var showBlockConfirm = false
+    @State private var showReportDialog = false
+
+    /// The live match entry, looked up by id every render so unread/profile
+    /// stay current — and nil during a push deep-link cold start before the
+    /// ChatStore listener has delivered this match.
+    private var entry: ChatStore.Entry? {
+        chats.entries.first { $0.matchId == matchId }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(messages) { message in
+                        ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                            let meta = metadata(at: index)
+                            if let day = meta.daySeparator {
+                                daySeparator(day)
+                            }
                             bubble(message)
                                 .id(message.id)
+                            if let time = meta.timestamp {
+                                timestampCaption(time, isMine: message.senderId == session.uid)
+                            }
                         }
                     }
                     .padding()
@@ -45,10 +63,10 @@ struct ChatThreadView: View {
             }
             inputBar
         }
-        .navigationTitle(entry.otherUser?.displayName ?? "Chat")
+        .navigationTitle(entry?.otherUser?.displayName ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let other = entry.otherUser {
+            if let other = entry?.otherUser {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         ProfileDetailView(card: other)
@@ -56,6 +74,17 @@ struct ChatThreadView: View {
                         RemotePhotoView(photo: other.photos?.first)
                             .frame(width: 32, height: 32)
                             .clipShape(Circle())
+                    }
+                }
+            }
+            if entry != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Unmatch", role: .destructive) { showUnmatchConfirm = true }
+                        Button("Block", role: .destructive) { showBlockConfirm = true }
+                        Button("Report") { showReportDialog = true }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -72,6 +101,24 @@ struct ChatThreadView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+        .confirmationDialog("Unmatch?", isPresented: $showUnmatchConfirm, titleVisibility: .visible) {
+            Button("Unmatch", role: .destructive) { Task { await unmatch() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll no longer see each other or be able to message.")
+        }
+        .confirmationDialog("Block this person?", isPresented: $showBlockConfirm, titleVisibility: .visible) {
+            Button("Block", role: .destructive) { Task { await block() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They won't be able to message you, and you'll be unmatched.")
+        }
+        .confirmationDialog("Report this person", isPresented: $showReportDialog, titleVisibility: .visible) {
+            ForEach(Vocabulary.reportReasons, id: \.self) { reason in
+                Button(reason) { Task { await report(reason: reason) } }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -90,6 +137,61 @@ struct ChatThreadView: View {
             if !isMine { Spacer(minLength: 48) }
         }
         .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+    }
+
+    // MARK: - Timestamps
+
+    /// What to render around the message at `index`: an optional day-separator
+    /// chip above, and an optional time caption below.
+    private struct RowMetadata {
+        var daySeparator: Date?
+        var timestamp: Date?
+    }
+
+    private func metadata(at index: Int) -> RowMetadata {
+        let message = messages[index]
+        var meta = RowMetadata()
+        let calendar = Calendar.current
+        if index == 0 || !calendar.isDate(message.createdAt, inSameDayAs: messages[index - 1].createdAt) {
+            meta.daySeparator = message.createdAt
+        }
+        if index == messages.count - 1 {
+            meta.timestamp = message.createdAt
+        } else {
+            let next = messages[index + 1]
+            // End of a consecutive run from the same sender, or a gap over 10
+            // minutes to the next message.
+            if next.senderId != message.senderId
+                || next.createdAt.timeIntervalSince(message.createdAt) > 600 {
+                meta.timestamp = message.createdAt
+            }
+        }
+        return meta
+    }
+
+    private func daySeparator(_ date: Date) -> some View {
+        Text(daySeparatorText(date))
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(.quaternary))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+    }
+
+    private func daySeparatorText(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.month(.abbreviated).day().year())
+    }
+
+    private func timestampCaption(_ date: Date, isMine: Bool) -> some View {
+        Text(date.formatted(date: .omitted, time: .shortened))
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
 
     private var inputBar: some View {
@@ -115,7 +217,7 @@ struct ChatThreadView: View {
     private func attachListener() {
         guard registration == nil else { return }
         registration = Firestore.firestore()
-            .collection("matches").document(entry.matchId)
+            .collection("matches").document(matchId)
             .collection("messages")
             .order(by: "createdAt")
             .limit(toLast: 100)
@@ -142,10 +244,12 @@ struct ChatThreadView: View {
     }
 
     private func markRead() {
-        guard entry.unread > 0 || messages.last?.senderId != session.uid else { return }
-        chats.clearUnread(matchId: entry.matchId)
+        // Reads the live entry (not a stale captured copy), so the unread guard
+        // reflects the current count.
+        guard (entry?.unread ?? 0) > 0 || messages.last?.senderId != session.uid else { return }
+        chats.clearUnread(matchId: matchId)
         Task {
-            let _: EmptyResponse? = try? await APIClient.shared.post("/api/matches/\(entry.matchId)/read")
+            let _: EmptyResponse? = try? await APIClient.shared.post("/api/matches/\(matchId)/read")
         }
     }
 
@@ -159,7 +263,7 @@ struct ChatThreadView: View {
             // active status, and senderId; the on_message_created Cloud Function
             // handles lastMessage/unreadCount denormalization and the push.
             try await Firestore.firestore()
-                .collection("matches").document(entry.matchId)
+                .collection("matches").document(matchId)
                 .collection("messages")
                 .addDocument(data: [
                     "senderId": uid,
@@ -169,6 +273,40 @@ struct ChatThreadView: View {
                     "readAt": NSNull(),
                 ])
             draft = ""
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    // MARK: - Thread actions
+
+    private func unmatch() async {
+        do {
+            let _: EmptyResponse = try await APIClient.shared.post("/api/matches/\(matchId)/unmatch")
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func block() async {
+        guard let otherUid = entry?.otherUid else { return }
+        do {
+            let _: EmptyResponse = try await APIClient.shared.post("/api/blocks/\(otherUid)")
+            BlockStore.shared.record(uid: otherUid, displayName: entry?.otherUser?.displayName)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func report(reason: String) async {
+        guard let otherUid = entry?.otherUid else { return }
+        do {
+            let _: EmptyResponse = try await APIClient.shared.post(
+                "/api/reports",
+                body: ReportIn(reportedUid: otherUid, reason: reason, note: "")
+            )
         } catch {
             errorMessage = error.localizedDescription
         }

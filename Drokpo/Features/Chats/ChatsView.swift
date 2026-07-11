@@ -3,9 +3,11 @@ import SwiftUI
 struct ChatsView: View {
     @Environment(SessionStore.self) private var session
     @Environment(ChatStore.self) private var chats
+    @State private var router = DeepLinkRouter.shared
+    @State private var path: [String] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if chats.isLoading && chats.entries.isEmpty {
                     ProgressView()
@@ -16,6 +18,9 @@ struct ChatsView: View {
                 }
             }
             .navigationTitle("Chats")
+            .navigationDestination(for: String.self) { matchId in
+                ChatThreadView(matchId: matchId)
+            }
             .alert("Something went wrong", isPresented: .init(
                 get: { chats.errorMessage != nil },
                 set: { if !$0 { chats.errorMessage = nil } }
@@ -25,6 +30,19 @@ struct ChatsView: View {
                 Text(chats.errorMessage ?? "")
             }
         }
+        .onAppear { consumeDeepLink() }
+        .onChange(of: router.pendingMatchId) { consumeDeepLink() }
+    }
+
+    /// A "message" push opens the thread; a "match" push just lands on the list.
+    /// Pushing before entries load is fine — ChatThreadView looks the match up
+    /// by id once the ChatStore listener delivers it.
+    private func consumeDeepLink() {
+        guard router.pendingMatchId != nil || router.pendingType != nil else { return }
+        if router.pendingType == "message", let matchId = router.pendingMatchId {
+            path = [matchId]
+        }
+        router.clear()
     }
 
     private var chatList: some View {
@@ -34,9 +52,7 @@ struct ChatsView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(chats.newMatches) { entry in
-                                NavigationLink {
-                                    ChatThreadView(entry: entry)
-                                } label: {
+                                NavigationLink(value: entry.matchId) {
                                     VStack(spacing: 6) {
                                         RemotePhotoView(photo: entry.otherUser?.photos?.first)
                                             .frame(width: 64, height: 64)
@@ -56,9 +72,7 @@ struct ChatsView: View {
             }
             Section {
                 ForEach(chats.conversations) { entry in
-                    NavigationLink {
-                        ChatThreadView(entry: entry)
-                    } label: {
+                    NavigationLink(value: entry.matchId) {
                         conversationRow(entry)
                     }
                     .swipeActions {

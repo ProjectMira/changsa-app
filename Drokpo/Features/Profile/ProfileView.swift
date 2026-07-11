@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ProfileView: View {
     @Environment(SessionStore.self) private var session
@@ -9,6 +10,11 @@ struct ProfileView: View {
     @State private var photoSelection: PhotosPickerItem?
     @State private var isWorking = false
     @State private var errorMessage: String?
+
+    /// Optimistic mirror of `profile?.photos` so drag-to-reorder feels instant;
+    /// re-synced from the server profile after each commit (or on failure).
+    @State private var orderedPhotos: [Photo] = []
+    @State private var draggedPhoto: Photo?
 
     private var profile: Profile? { session.myProfile }
 
@@ -44,6 +50,8 @@ struct ProfileView: View {
                 SettingsView()
             }
             .refreshable { await session.refreshProfile() }
+            .onAppear { syncPhotos() }
+            .onChange(of: profile?.photos) { syncPhotos() }
             .overlay { if isWorking { ProgressView() } }
             .alert("Something went wrong", isPresented: .init(
                 get: { errorMessage != nil },
@@ -57,24 +65,24 @@ struct ProfileView: View {
     }
 
     private var photosSection: some View {
-        Section("Photos") {
+        Section {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(profile?.photos ?? []) { photo in
-                        RemotePhotoView(photo: photo)
-                            .frame(width: 90, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(alignment: .topTrailing) {
-                                Button {
-                                    Task { await deletePhoto(photo) }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.white, .black.opacity(0.6))
-                                }
-                                .padding(4)
+                    ForEach(orderedPhotos) { photo in
+                        photoCell(photo)
+                            .opacity(draggedPhoto?.id == photo.id ? 0.5 : 1)
+                            .onDrag {
+                                draggedPhoto = photo
+                                return NSItemProvider(object: photo.storagePath as NSString)
                             }
+                            .onDrop(of: [.text], delegate: PhotoDropDelegate(
+                                photo: photo,
+                                orderedPhotos: $orderedPhotos,
+                                draggedPhoto: $draggedPhoto,
+                                onCommit: { Task { await commitOrder() } }
+                            ))
                     }
-                    if (profile?.photos?.count ?? 0) < 6 {
+                    if orderedPhotos.count < 6 {
                         PhotosPicker(selection: $photoSelection, matching: .images) {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(.quaternary)
@@ -89,6 +97,60 @@ struct ProfileView: View {
                 photoSelection = nil
                 Task { await addPhoto(item) }
             }
+        } header: {
+            Text("Photos")
+        } footer: {
+            Text("Drag to reorder — your first photo is the one people see on your card.")
+        }
+    }
+
+    private func photoCell(_ photo: Photo) -> some View {
+        let isPrimary = orderedPhotos.first?.id == photo.id
+        return RemotePhotoView(photo: photo)
+            .frame(width: 90, height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    Task { await deletePhoto(photo) }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                }
+                .padding(4)
+            }
+            .overlay(alignment: .bottomLeading) {
+                if isPrimary {
+                    Text("Primary")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(.black.opacity(0.6)))
+                        .padding(4)
+                }
+            }
+    }
+
+    /// Re-mirror the server photos into the local order, unless a drag is in
+    /// flight (so a mid-drag profile refresh doesn't clobber the reorder).
+    private func syncPhotos() {
+        guard draggedPhoto == nil else { return }
+        orderedPhotos = profile?.photos ?? []
+    }
+
+    private func commitOrder() async {
+        draggedPhoto = nil
+        let newOrder = orderedPhotos.map(\.storagePath)
+        guard newOrder != (profile?.photos ?? []).map(\.storagePath) else { return }
+        do {
+            let _: EmptyResponse = try await APIClient.shared.patch(
+                "/api/profile/me/photos/order",
+                body: PhotoOrderUpdate(storagePaths: newOrder)
+            )
+            await session.refreshProfile()
+        } catch {
+            errorMessage = error.localizedDescription
+            await session.refreshProfile() // revert the optimistic order
         }
     }
 
@@ -171,211 +233,6 @@ struct ProfileView: View {
     }
 }
 
-// MARK: - Settings
-
-struct SettingsView: View {
-    @Environment(SessionStore.self) private var session
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var showDeleteConfirmation = false
-    @State private var isDeleting = false
-    @State private var errorMessage: String?
-
-    private var appVersion: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
-        return "\(version) (\(build))"
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("About") {
-                    Link(destination: AppConfig.privacyPolicyURL) {
-                        HStack {
-                            Text("Privacy policy")
-                            Spacer()
-                            Image(systemName: "arrow.up.right").foregroundStyle(.secondary)
-                        }
-                    }
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text(appVersion).foregroundStyle(.secondary)
-                    }
-                }
-                Section("Privacy & activity") {
-                    NavigationLink("Blocked users") { BlockedUsersView() }
-                    NavigationLink("Messages you've sent") { SentMessagesView() }
-                }
-                Section("Account") {
-                    Button("Sign out") {
-                        dismiss()
-                        session.signOut()
-                    }
-                    Button("Delete account", role: .destructive) {
-                        showDeleteConfirmation = true
-                    }
-                    .disabled(isDeleting)
-                }
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .overlay { if isDeleting { ProgressView() } }
-            .confirmationDialog(
-                "Delete your account?",
-                isPresented: $showDeleteConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Delete everything", role: .destructive) {
-                    Task { await deleteAccount() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Your profile, photos, likes, and matches will be permanently removed. This cannot be undone.")
-            }
-            .alert("Couldn't delete account", isPresented: .init(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(errorMessage ?? "")
-            }
-        }
-    }
-
-    private func deleteAccount() async {
-        isDeleting = true
-        defer { isDeleting = false }
-        do {
-            let _: EmptyResponse = try await APIClient.shared.delete("/api/profile/me")
-            // The backend already deleted the Firebase Auth user; signing out
-            // clears the now-invalid local session.
-            dismiss()
-            session.signOut()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
-// MARK: - Blocked users
-
-struct BlockedUsersView: View {
-    @State private var store = BlockStore.shared
-    @State private var workingUid: String?
-    @State private var errorMessage: String?
-
-    var body: some View {
-        List {
-            if store.blocked.isEmpty {
-                ContentUnavailableView(
-                    "No blocked users",
-                    systemImage: "hand.raised",
-                    description: Text("People you block from the feed will show up here.")
-                )
-            } else {
-                ForEach(store.blocked) { user in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(user.displayName ?? "Member")
-                            Text(user.blockedAt, style: .date)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Unblock") {
-                            Task { await unblock(user) }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(workingUid != nil)
-                    }
-                }
-            }
-        }
-        .navigationTitle("Blocked users")
-        .navigationBarTitleDisplayMode(.inline)
-        .alert("Couldn't unblock", isPresented: .init(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
-    }
-
-    private func unblock(_ user: BlockedUser) async {
-        workingUid = user.uid
-        defer { workingUid = nil }
-        do {
-            try await BlockStore.shared.unblock(user)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
-// MARK: - Sent messages
-
-/// Recent messages you've sent across all conversations (GET /api/messages/sent).
-struct SentMessagesView: View {
-    @State private var messages: [SentMessage] = []
-    @State private var isLoading = true
-    @State private var errorMessage: String?
-
-    var body: some View {
-        List {
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.secondary)
-            } else if messages.isEmpty && !isLoading {
-                ContentUnavailableView(
-                    "Nothing sent yet",
-                    systemImage: "paperplane",
-                    description: Text("Messages you send in your chats will show up here.")
-                )
-            } else {
-                ForEach(messages) { message in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(message.text ?? "")
-                            .lineLimit(3)
-                        if let date = message.sentDate {
-                            Text(date, format: .relative(presentation: .named))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Sent messages")
-        .navigationBarTitleDisplayMode(.inline)
-        .overlay { if isLoading { ProgressView() } }
-        .task { await load() }
-        .refreshable { await load() }
-    }
-
-    private func load() async {
-        do {
-            let list: TolerantList<SentMessage> = try await APIClient.shared.get(
-                "/api/messages/sent",
-                query: [URLQueryItem(name: "limit", value: "100")]
-            )
-            messages = list.items
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
-    }
-}
-
 // MARK: - Edit profile
 
 struct EditProfileView: View {
@@ -427,6 +284,16 @@ struct EditProfileView: View {
         instagram.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "@", with: "")
     }
 
+    /// Region options, prepending the user's stored value when it's a legacy
+    /// region (e.g. U-Tsang/Kham/Amdo) no longer offered — otherwise a Picker
+    /// whose selection isn't among the tags renders blank.
+    private var regionOptions: [String] {
+        if !region.isEmpty, !Vocabulary.regions.contains(region) {
+            return [region] + Vocabulary.regions
+        }
+        return Vocabulary.regions
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -446,7 +313,8 @@ struct EditProfileView: View {
                     TextField("Occupation", text: $occupation)
                     TextField("Education", text: $education)
                     Picker("Region", selection: $region) {
-                        ForEach(Vocabulary.regions, id: \.self) { Text($0).tag($0) }
+                        Text("Not set").tag("")
+                        ForEach(regionOptions, id: \.self) { Text($0).tag($0) }
                     }
                 }
                 Section {
@@ -619,5 +487,37 @@ private struct RangeSliderRow: View {
                 in: bounds
             ) { Text("Maximum age") }
         }
+    }
+}
+
+/// Reorders photos as you drag one over another. Lives inside the ScrollView,
+/// where `.onMove` doesn't work; swaps optimistically on `dropEntered` and
+/// commits to the backend on drop.
+private struct PhotoDropDelegate: DropDelegate {
+    let photo: Photo
+    @Binding var orderedPhotos: [Photo]
+    @Binding var draggedPhoto: Photo?
+    let onCommit: () -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged = draggedPhoto, dragged.id != photo.id,
+              let from = orderedPhotos.firstIndex(of: dragged),
+              let to = orderedPhotos.firstIndex(of: photo) else { return }
+        withAnimation {
+            orderedPhotos.move(
+                fromOffsets: IndexSet(integer: from),
+                toOffset: to > from ? to + 1 : to
+            )
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedPhoto = nil
+        onCommit()
+        return true
     }
 }

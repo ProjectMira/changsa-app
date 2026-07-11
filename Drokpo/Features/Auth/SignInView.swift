@@ -2,6 +2,7 @@ import AuthenticationServices
 import SwiftUI
 
 struct SignInView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
     @State private var isSigningIn = false
 
@@ -38,7 +39,7 @@ struct SignInView: View {
                         }
                     }
                 }
-                .signInWithAppleButtonStyle(.black)
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                 .frame(height: 50)
 
                 Button {

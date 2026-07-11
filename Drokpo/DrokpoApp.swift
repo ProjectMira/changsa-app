@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct DrokpoApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage("drokpo.appearance") private var appearance: AppearanceMode = .system
     @State private var session: SessionStore
 
     init() {
@@ -40,6 +41,7 @@ struct DrokpoApp: App {
         WindowGroup {
             RootView()
                 .environment(session)
+                .preferredColorScheme(appearance.colorScheme)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
     }

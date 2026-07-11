@@ -203,6 +203,10 @@ struct PhotoConfirm: Encodable {
     var order: Int
 }
 
+struct PhotoOrderUpdate: Encodable {
+    var storagePaths: [String]
+}
+
 struct ProfileUpdate: Encodable {
     var displayName: String?
     var bio: String?
@@ -245,7 +249,6 @@ struct ReportIn: Encodable {
 enum Vocabulary {
     static let genders = ["male", "female"]
     static let regions = [
-        "U-Tsang", "Kham", "Amdo",
         "India", "Nepal", "Bhutan",
         "North America", "Europe", "Australia", "Other",
     ]
@@ -259,9 +262,6 @@ enum Vocabulary {
 
     /// Rough fallback coordinates per region for users who decline location access.
     static let regionCoordinates: [String: GeoLocation] = [
-        "U-Tsang": .init(lat: 29.65, lng: 91.1),
-        "Kham": .init(lat: 30.05, lng: 97.17),
-        "Amdo": .init(lat: 36.03, lng: 103.73),
         "India": .init(lat: 32.22, lng: 76.32),
         "Nepal": .init(lat: 27.72, lng: 85.32),
         "Bhutan": .init(lat: 27.47, lng: 89.64),
