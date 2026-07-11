@@ -7,6 +7,7 @@ struct ProfileView: View {
 
     @State private var showEditSheet = false
     @State private var showSettings = false
+    @State private var showPreview = false
     @State private var photoSelection: PhotosPickerItem?
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -25,6 +26,7 @@ struct ProfileView: View {
                 aboutSection
                 socialsSection
                 preferencesSection
+                accountSection
             }
             .navigationTitle("Profile")
             .toolbar {
@@ -34,6 +36,14 @@ struct ProfileView: View {
                     } label: {
                         Image(systemName: "gearshape")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showPreview = true
+                    } label: {
+                        Image(systemName: "eye")
+                    }
+                    .disabled(profile == nil)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Edit") { showEditSheet = true }
@@ -48,6 +58,20 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showPreview) {
+                if let profile {
+                    NavigationStack {
+                        ProfileDetailView(card: profile.asFeedCard)
+                            .navigationTitle("Preview")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") { showPreview = false }
+                                }
+                            }
+                    }
+                }
             }
             .refreshable { await session.refreshProfile() }
             .onAppear { syncPhotos() }
@@ -186,6 +210,16 @@ struct ProfileView: View {
             let preferences = profile?.preferences ?? Preferences()
             row("Age range", "\(preferences.ageMin)–\(preferences.ageMax)")
             row("Distance", "\(preferences.distanceKm) km")
+        }
+    }
+
+    private var accountSection: some View {
+        Section {
+            row("Email", session.email)
+        } header: {
+            Text("Account")
+        } footer: {
+            Text("The account you're signed in with. Only you can see this.")
         }
     }
 

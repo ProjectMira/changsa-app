@@ -15,6 +15,9 @@ final class SessionStore {
     /// queries and unread counts.
     var uid: String? { Auth.auth().currentUser?.uid }
 
+    /// Email of the signed-in account (nil for providers that hide it).
+    var email: String? { Auth.auth().currentUser?.email }
+
     private var authListener: AuthStateDidChangeListenerHandle?
 
     init() {

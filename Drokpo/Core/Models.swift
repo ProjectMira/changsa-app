@@ -63,6 +63,23 @@ struct Profile: Codable, Equatable, Identifiable {
         formatter.timeZone = TimeZone(identifier: "UTC")
         return formatter
     }()
+
+    /// Your own profile shaped as the card other members see, for previewing.
+    var asFeedCard: FeedCard {
+        FeedCard(
+            uid: uid ?? "me",
+            displayName: displayName,
+            age: age,
+            dob: dob,
+            region: region,
+            bio: bio,
+            occupation: occupation,
+            languages: languages,
+            interests: interests,
+            socials: socials,
+            photos: photos
+        )
+    }
 }
 
 struct FeedCard: Codable, Equatable, Identifiable {
