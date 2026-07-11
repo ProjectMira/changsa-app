@@ -18,12 +18,18 @@ env:
 
 jobs:
   testflight:
-    runs-on: macos-15
+    # App Store Connect requires builds made with the iOS 26 SDK (Xcode 26),
+    # and GitHub ships exactly one Xcode major per macOS image — macos-15 tops
+    # out at Xcode 16, so this must run on macos-26.
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: write # pushes the version tag after a successful upload
     steps:
       - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
