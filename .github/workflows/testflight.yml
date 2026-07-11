@@ -30,7 +30,21 @@ jobs:
 
       - name: Restore secrets
         run: |
-          printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > Drokpo/Resources/GoogleService-Info.plist
+          # GoogleService-Info.plist has the same secret-mangling hazards as the
+          # .p8: a base64-wrapped value, literal "\n"/"\r" escape sequences, or
+          # CRLF endings all yield a file Xcode can't read ("PropertyListConversion
+          # error"). Normalise, then lint before the build depends on it.
+          plist="$GOOGLE_SERVICE_INFO_PLIST"
+          if ! printf '%s' "$plist" | grep -q '<plist'; then
+            decoded="$(printf '%s' "$plist" | tr -d '[:space:]' | openssl base64 -d -A 2>/dev/null || true)"
+            printf '%s' "$decoded" | grep -q '<plist' && plist="$decoded"
+          fi
+          printf '%s' "$plist" | sed -e 's/\\r//g' -e 's/\\n//g' | tr -d '\r' > Drokpo/Resources/GoogleService-Info.plist
+          if ! plutil -lint Drokpo/Resources/GoogleService-Info.plist >/dev/null 2>&1; then
+            echo "::error::GOOGLE_SERVICE_INFO_PLIST is not a valid property list after normalisation. Re-add it with the exact file bytes:  gh secret set GOOGLE_SERVICE_INFO_PLIST --repo ProjectMira/drokpo-app < Drokpo/Resources/GoogleService-Info.plist"
+            exit 1
+          fi
+
           mkdir -p ~/private_keys
           KEY_PATH=~/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
