@@ -123,8 +123,8 @@ private struct SwipeableCard: View {
         CardView(card: card, onSafetyTapped: { showSafetySheet = true }, onExpand: isTop ? onExpand : nil)
             .offset(offset)
             .rotationEffect(.degrees(Double(offset.width / 18)))
-            .overlay(alignment: .topLeading) { stamp("LIKE", color: .green, visible: offset.width > 40) }
-            .overlay(alignment: .topTrailing) { stamp("PASS", color: .red, visible: offset.width < -40) }
+            .overlay(alignment: .topLeading) { stamp("LIKE", color: .brandRed, visible: offset.width > 40) }
+            .overlay(alignment: .topTrailing) { stamp("PASS", color: .accentColor, visible: offset.width < -40) }
             .gesture(isTop ? dragGesture : nil)
             .animation(.spring(duration: 0.3), value: offset)
             .confirmationDialog("Safety", isPresented: $showSafetySheet) {

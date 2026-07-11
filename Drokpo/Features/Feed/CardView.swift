@@ -16,14 +16,22 @@ struct CardView: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .clipped()
 
-                // Tap left/right half to flip through photos.
+                // Tap the outer thirds to flip through photos; the center
+                // column expands the profile, same as tapping the info block.
                 if photos.count > 1 {
                     HStack(spacing: 0) {
                         Rectangle().fill(.clear).contentShape(Rectangle())
+                            .frame(width: geometry.size.width * 0.3)
                             .onTapGesture { photoIndex = max(0, photoIndex - 1) }
                         Rectangle().fill(.clear).contentShape(Rectangle())
+                            .onTapGesture { onExpand?() }
+                        Rectangle().fill(.clear).contentShape(Rectangle())
+                            .frame(width: geometry.size.width * 0.3)
                             .onTapGesture { photoIndex = min(photos.count - 1, photoIndex + 1) }
                     }
+                } else {
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onTapGesture { onExpand?() }
                 }
 
                 LinearGradient(

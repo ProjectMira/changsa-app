@@ -15,7 +15,6 @@ struct SignInView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 96, height: 96)
-                    .foregroundStyle(.tint)
                 Text("Drokpo")
                     .font(.largeTitle.bold())
                 Text("Find your person in the Tibetan community")

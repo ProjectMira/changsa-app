@@ -5,9 +5,9 @@ import SwiftUI
 /// plain read-only views (own profile preview, matched-chat header).
 enum ProfileDetailContext {
     case plain
-    /// Viewing a "Liked you" entry. `matchId` is non-nil when already
-    /// matched (show "Send message"); nil means "Like back" is offered.
-    case likedYou(matchId: String?, onLikeBack: () async -> SwipeResult?)
+    /// Viewing a "Liked you" entry that isn't a match yet — offers "Like
+    /// back", which flips to "Send message" in place once it matches.
+    case likedYou(onLikeBack: () async -> SwipeResult?)
     /// Viewing an expanded card from the Discover deck.
     case discover(onLike: () -> Void, onPass: () -> Void)
 }
@@ -114,23 +114,34 @@ struct ProfileDetailView: View {
         switch context {
         case .plain:
             EmptyView()
-        case .likedYou(let matchId, let onLikeBack):
+        case .likedYou(let onLikeBack):
             Group {
-                if let activeMatchId = localMatchId ?? matchId {
-                    Button("Send message") { openThread(matchId: activeMatchId) }
-                        .buttonStyle(.borderedProminent)
+                if let activeMatchId = localMatchId {
+                    Button {
+                        openThread(matchId: activeMatchId)
+                    } label: {
+                        Label("Send message", systemImage: "bubble.left.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 } else {
                     Button {
                         Task { await likeBack(onLikeBack) }
                     } label: {
                         Label("Like back", systemImage: "heart.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 30)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.pink)
+                    .controlSize(.large)
+                    .tint(.brandRed)
                     .disabled(isLiking)
                 }
             }
-            .frame(maxWidth: .infinity)
             .padding()
             .background(.bar)
         case .discover(let onLike, let onPass):

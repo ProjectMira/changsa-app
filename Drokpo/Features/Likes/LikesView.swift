@@ -69,56 +69,27 @@ struct LikesView: View {
         List(entries) { entry in
             if let card = entry.otherUser {
                 NavigationLink {
-                    ProfileDetailView(
-                        card: card,
-                        context: .likedYou(
-                            matchId: entry.matchId,
-                            onLikeBack: { await likeBack(card) }
-                        )
-                    )
+                    destination(for: card)
                 } label: {
-                    HStack(spacing: 12) {
-                        RemotePhotoView(photo: card.photos?.first)
-                            .frame(width: 56, height: 56)
-                            .clipShape(Circle())
-                        VStack(alignment: .leading) {
-                            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                Text(card.displayName ?? "—").font(.headline)
-                                if let age = card.displayAge {
-                                    Text("\(age)").foregroundStyle(.secondary)
-                                }
-                                if entry.isMatched {
-                                    Text("Matched")
-                                        .font(.caption2.bold())
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Capsule().fill(.green))
-                                }
-                            }
-                            if let region = card.region {
-                                Text(region)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if direction == .received && !entry.isMatched {
-                            Button {
-                                Task { await likeBackFromRow(card) }
-                            } label: {
-                                Image(systemName: "heart.fill")
-                                    .foregroundStyle(.pink)
-                                    .padding(8)
-                                    .background(Circle().fill(.quaternary))
-                            }
-                            .buttonStyle(.borderless)
-                        }
+                    LikeRow(card: card, showLikeBack: direction == .received) {
+                        Task { await likeBackFromRow(card) }
                     }
                 }
             }
         }
         .listStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func destination(for card: FeedCard) -> some View {
+        if direction == .received {
+            ProfileDetailView(
+                card: card,
+                context: .likedYou(onLikeBack: { await likeBack(card) })
+            )
+        } else {
+            ProfileDetailView(card: card)
+        }
     }
 
     private var emptyState: some View {
@@ -142,6 +113,10 @@ struct LikesView: View {
     /// Only shows the full-screen spinner on the very first load; later calls
     /// (tab reselected, pull-to-refresh, returning from a like push) refresh
     /// silently so the existing list doesn't flash.
+    ///
+    /// Matched people are dropped from both lists — they already show up in
+    /// Chats (New matches / conversations), so keeping them here duplicated
+    /// the same person under both "Liked you" and "You liked".
     private func load() async {
         if received.isEmpty && given.isEmpty { isLoading = true }
         do {
@@ -151,8 +126,8 @@ struct LikesView: View {
             async let givenList: TolerantList<SwipeEntry> = APIClient.shared.get(
                 "/api/swipes", query: [URLQueryItem(name: "action", value: "like")]
             )
-            received = try await receivedList.items
-            given = try await givenList.items
+            received = try await receivedList.items.filter { !$0.isMatched }
+            given = try await givenList.items.filter { !$0.isMatched }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -181,5 +156,48 @@ struct LikesView: View {
     private func likeBackFromRow(_ card: FeedCard) async {
         guard let result = await likeBack(card), result.isMatch else { return }
         matched = (name: card.displayName ?? "they", matchId: result.matchId ?? result.match?.matchId)
+    }
+}
+
+/// A single Likes-list row. Pulled out of `LikesView.likeList` into its own
+/// view — nesting this much conditional content directly inside a `List`
+/// row closure made the type checker choke on `List(entries) { ... }`
+/// itself (a bogus "cannot convert to Binding<Data>" error unrelated to the
+/// real content); a dedicated view type keeps each closure's body small
+/// enough to type-check.
+private struct LikeRow: View {
+    let card: FeedCard
+    let showLikeBack: Bool
+    let onLikeBack: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RemotePhotoView(photo: card.photos?.first)
+                .frame(width: 56, height: 56)
+                .clipShape(Circle())
+            VStack(alignment: .leading) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(card.displayName ?? "—").font(.headline)
+                    if let age = card.displayAge {
+                        Text("\(age)").foregroundStyle(.secondary)
+                    }
+                }
+                if let region = card.region {
+                    Text(region)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if showLikeBack {
+                Button(action: onLikeBack) {
+                    Image(systemName: "heart.fill")
+                        .foregroundStyle(.brandRed)
+                        .padding(8)
+                        .background(Circle().fill(.quaternary))
+                }
+                .buttonStyle(.borderless)
+            }
+        }
     }
 }

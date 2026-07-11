@@ -14,9 +14,9 @@ struct SwipeActionButtons: View {
     var body: some View {
         HStack {
             Spacer()
-            button(systemImage: "xmark", tint: .red, action: onPass)
+            button(systemImage: "xmark", tint: .accentColor, action: onPass)
             Spacer()
-            button(systemImage: "heart.fill", tint: .pink, action: onLike)
+            button(systemImage: "heart.fill", tint: .brandRed, action: onLike)
             Spacer()
         }
     }

@@ -12,7 +12,9 @@ Meet Tibetans near and far
 
 ## Promotional text (170 chars max)
 
-Drokpo (གྲོགས་པོ་ — "friend") is where Tibetans meet: date, make friends, and stay rooted in community, wherever in the world you are.
+Drokpo means "friend" — and this is where Tibetans meet: date, make friends, and stay rooted in community, wherever in the world you are.
+
+(Note: Apple rejects Tibetan script characters in en-US fields — this one shipped live already corrected; keep this field romanized too.)
 
 ## Description
 
@@ -27,7 +29,8 @@ WHY DROKPO
 • Made for the community — connect with Tibetans across U-Tsang, Kham, Amdo, India, Nepal, Bhutan, and the global diaspora.
 • Real people, real profiles — every profile is linked to an Instagram account, so you know who you're talking to.
 • Discover nearby and far — set your distance and age preferences, or reach across the world.
-• Likes that go both ways — see who liked you, and when you like them back, it's a match.
+• Likes that go both ways — get notified the moment someone likes you, then like back or send a message straight from their profile.
+• See the full picture — tap any profile to view every photo along with their region, languages, interests, occupation, and more.
 • Chat instantly — real-time messaging with your matches, with notifications for new matches and messages.
 • Share what matters — your region, languages, interests, and socials, from gorshey to momo cooking.
 • Stay in control — block, report, unmatch, and delete your account (and all your data) any time.
@@ -44,12 +47,11 @@ tibetan,dating,tibet,himalayan,buddhist,match,friends,chat,diaspora,bhutan,nepal
 
 ## What's New (this build)
 
-• New: see everyone who liked you in the Likes tab
-• New: push notifications for new matches and messages
-• New: manage blocked users and review sent messages in Settings
-• New: edit your gender and birthday, and refresh your location after you move
-• Fresh app icon and sign-in screen
-• Account deletion now removes all of your data in one step
+• Get notified the moment someone likes you — tap the notification to see who
+• Like back or send a message straight from their profile
+• Tap any card in Discover to see the full profile
+• It's a match! now takes you straight into the chat
+• Fresh look: new icon and red/blue brand colors
 
 ## Listing details
 

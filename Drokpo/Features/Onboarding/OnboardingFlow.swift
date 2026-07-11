@@ -187,7 +187,7 @@ private struct LocationStep: View {
 
             if model.location != nil {
                 Label("Location saved", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.tint)
             } else {
                 Button {
                     isFetching = true
