@@ -1,98 +1,78 @@
 #!/usr/bin/env python3
-"""Regenerate the app icon and sign-in logo for the red/blue brand refresh.
+"""Regenerate the app icon and sign-in logo for the red-ground brand.
 
-Keeps the existing handshake glyph (extracted from the current Logo.png's
-alpha channel as a mask) and recolors it: Facebook blue `#1877F2` for the
-handshake, a solid `#FF0000` heart badge overlapping its top-right, matching
-the in-app palette (Drokpo/Core/Brand.swift — blue is the accent, red is
-reserved for like/love).
+YouTube red `#FF0000` ground, handshake in Facebook blue `#1877F2` (the app
+accent, see Drokpo/Core/Brand.swift) with a thin white halo so the glyph
+stays legible on the red. No heart badge.
 
-Usage (from a venv with Pillow installed):
+The glyph source is ci/assets/handshake_glyph.png, a committed grayscale
+mask. Do NOT re-extract it from Logo.png — that file's alpha is now a
+rounded red tile, not the handshake.
+
+Usage (from a venv with Pillow installed, run from the repo root):
     python3 ci/make_brand_assets.py
-
-Run from the repo root; paths below are relative to it.
 """
 
-import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+GLYPH_PATH = REPO_ROOT / "ci/assets/handshake_glyph.png"
 LOGO_PATH = REPO_ROOT / "Drokpo/Resources/Assets.xcassets/Logo.imageset/Logo.png"
 ICON_PATH = REPO_ROOT / "Drokpo/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
 
-BLUE = (24, 119, 242, 255)       # #1877F2 — Facebook blue, the app accent
-BLUE_DARK = (14, 95, 204, 255)   # #0E5FCC — gradient bottom for the icon
-RED = (255, 0, 0, 255)           # #FF0000 — YouTube red, like/love only
-WHITE = (255, 250, 245, 255)
+RED = (255, 0, 0, 255)        # #FF0000 — YouTube red, the brand ground
+BLUE = (24, 119, 242, 255)    # #1877F2 — Facebook blue, the app accent
+WHITE = (255, 255, 255, 255)  # halo
+
+CORNER_RADIUS_RATIO = 0.224   # iOS-style rounded tile for the in-app logo
+SUPERSAMPLE = 4               # draw the tile at 4x, LANCZOS down for AA corners
 
 
 def load_glyph_mask() -> Image.Image:
-    """Extract the handshake glyph's alpha channel, cropped to its bbox."""
-    original = Image.open(LOGO_PATH).convert("RGBA")
-    alpha = original.split()[-1]
-    bbox = alpha.getbbox()
-    return alpha.crop(bbox)
+    """The committed handshake mask, tightly cropped, grayscale."""
+    mask = Image.open(GLYPH_PATH).convert("L")
+    return mask.crop(mask.getbbox())
 
 
-def colored_glyph(mask: Image.Image, color: tuple, target_width: int) -> Image.Image:
-    """A solid-`color` RGBA image shaped by `mask`, scaled to `target_width`."""
+def haloed_glyph(target_width: int) -> Image.Image:
+    """Blue handshake over a thin white halo, as an RGBA layer.
+
+    The halo is the mask dilated with MaxFilter (kernel must be odd).
+    The mask is padded first so the dilation doesn't clip at the edges
+    of the bbox-tight mask.
+    """
+    mask = load_glyph_mask()
     scale = target_width / mask.width
-    target_height = round(mask.height * scale)
-    resized_mask = mask.resize((target_width, target_height), Image.LANCZOS)
-    solid = Image.new("RGBA", resized_mask.size, color)
-    solid.putalpha(resized_mask)
-    return solid
+    mask = mask.resize((target_width, round(mask.height * scale)), Image.LANCZOS)
+
+    halo_px = max(3, round(target_width * 0.015))
+    pad = halo_px + 2
+    padded = Image.new("L", (mask.width + 2 * pad, mask.height + 2 * pad), 0)
+    padded.paste(mask, (pad, pad))
+    halo_mask = padded.filter(ImageFilter.MaxFilter(2 * halo_px + 1))
+
+    layer = Image.new("RGBA", padded.size, (0, 0, 0, 0))
+    halo = Image.new("RGBA", padded.size, WHITE)
+    halo.putalpha(halo_mask)
+    glyph = Image.new("RGBA", padded.size, BLUE)
+    glyph.putalpha(padded)
+    layer.alpha_composite(halo)
+    layer.alpha_composite(glyph)
+    return layer
 
 
-def heart_points(center: tuple, size: float, steps: int = 200) -> list:
-    """Classic parametric heart curve, point-down, centered at `center`."""
-    cx, cy = center
-    scale = size / 34.0  # curve's natural extent is roughly [-16, 16] x [-17, 13]
-    points = []
-    for i in range(steps):
-        t = 2 * math.pi * i / steps
-        x = 16 * math.sin(t) ** 3
-        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
-        points.append((cx + x * scale, cy - y * scale))
-    return points
-
-
-def draw_heart(canvas: Image.Image, center: tuple, size: float, halo: bool = True) -> None:
-    """Paints a red heart badge onto `canvas`, with an optional white halo
-    so it separates cleanly from whatever's behind it."""
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    if halo:
-        draw.polygon(heart_points(center, size * 1.22), fill=WHITE)
-    draw.polygon(heart_points(center, size), fill=RED)
-    canvas.alpha_composite(layer)
+def centered(canvas_size: int, layer: Image.Image) -> tuple:
+    return ((canvas_size - layer.width) // 2, (canvas_size - layer.height) // 2)
 
 
 def make_icon() -> None:
+    """1024x1024 flat red, centered blue handshake, saved RGB (no alpha)."""
     size = 1024
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    gradient = Image.new("L", (1, size))
-    for y in range(size):
-        t = y / (size - 1)
-        gradient.putpixel((0, y), round(255 * (1 - t)))
-    gradient = gradient.resize((size, size))
-
-    top = Image.new("RGBA", (size, size), BLUE)
-    bottom = Image.new("RGBA", (size, size), BLUE_DARK)
-    canvas = Image.composite(top, bottom, gradient)
-
-    mask = load_glyph_mask()
-    glyph = colored_glyph(mask, WHITE, target_width=round(size * 0.58))
-    glyph_pos = (
-        round(size * 0.5 - glyph.width * 0.55),
-        round(size * 0.58 - glyph.height * 0.5),
-    )
-    canvas.alpha_composite(glyph, glyph_pos)
-
-    heart_center = (round(size * 0.74), round(size * 0.28))
-    draw_heart(canvas, heart_center, size=size * 0.19)
+    canvas = Image.new("RGBA", (size, size), RED)
+    layer = haloed_glyph(target_width=round(size * 0.61))
+    canvas.alpha_composite(layer, centered(size, layer))
 
     # App icon must have no alpha channel.
     canvas.convert("RGB").save(ICON_PATH)
@@ -100,20 +80,17 @@ def make_icon() -> None:
 
 
 def make_logo() -> None:
+    """560x560 RGBA: red rounded tile (mini app icon), blue handshake."""
     size = 560
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-
-    mask = load_glyph_mask()
-    glyph = colored_glyph(mask, BLUE, target_width=round(size * 0.80))
-    glyph_pos = (
-        round(size * 0.48 - glyph.width * 0.55),
-        round(size * 0.55 - glyph.height * 0.5),
+    big = size * SUPERSAMPLE
+    tile = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    ImageDraw.Draw(tile).rounded_rectangle(
+        [0, 0, big - 1, big - 1], radius=round(big * CORNER_RADIUS_RATIO), fill=RED
     )
-    canvas.alpha_composite(glyph, glyph_pos)
+    canvas = tile.resize((size, size), Image.LANCZOS)
 
-    heart_center = (round(size * 0.76), round(size * 0.24))
-    draw_heart(canvas, heart_center, size=size * 0.20)
-
+    layer = haloed_glyph(target_width=round(size * 0.63))
+    canvas.alpha_composite(layer, centered(size, layer))
     canvas.save(LOGO_PATH)
     print(f"wrote {LOGO_PATH} ({canvas.width}x{canvas.height}, RGBA)")
 
