@@ -9,7 +9,12 @@
     <key>teamID</key>
     <string>W66Z24ZPWQ</string>
     <key>signingStyle</key>
-    <string>automatic</string>
+    <string>manual</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>app.drokpo.ios</key>
+        <string>Drokpo App Store CI</string>
+    </dict>
     <key>uploadSymbols</key>
     <true/>
     <!-- CI computes the build number itself (and git-tags it), so Apple must

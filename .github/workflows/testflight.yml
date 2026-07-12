@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
 
 # Required repo secrets:
-#   ASC_API_KEY_P8            — contents of AuthKey_DFDRX9AW9K.p8 (team key, Admin role, for cloud signing)
-#   GOOGLE_SERVICE_INFO_PLIST — contents of Drokpo/Resources/GoogleService-Info.plist
+#   ASC_API_KEY_P8              — contents of AuthKey_DFDRX9AW9K.p8 (team key, Admin role, for cloud signing)
+#   GOOGLE_SERVICE_INFO_PLIST   — contents of Drokpo/Resources/GoogleService-Info.plist
+#   BUILD_CERTIFICATE_P12       — base64 of the "Apple Distribution" .p12 (see ci/README-signing.md)
+#   BUILD_CERTIFICATE_PASSWORD  — password the .p12 was exported with
+#   BUILD_PROVISIONING_PROFILE  — base64 of the matching "Drokpo App Store CI" .mobileprovision
 env:
   ASC_KEY_ID: DFDRX9AW9K
   ASC_ISSUER_ID: 740fa955-2ad0-4d4c-a447-c67f9c446977
@@ -127,6 +130,44 @@ jobs:
           fi
           echo "App Store Connect credentials OK (key $ASC_KEY_ID)."
 
+      - name: Import signing certificate and provisioning profile
+        run: |
+          # One fixed "Apple Distribution" identity, reused on every run — see
+          # ci/README-signing.md for why (Automatic signing on ephemeral
+          # runners mints a new certificate every time and exhausts the
+          # account's quota).
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 24)
+          CERT_PATH="$RUNNER_TEMP/dist.p12"
+          PROFILE_PATH="$RUNNER_TEMP/Drokpo_App_Store_CI.mobileprovision"
+
+          echo -n "$BUILD_CERTIFICATE_P12" | base64 --decode -o "$CERT_PATH"
+
+          # codesign needs Apple's WWDR G3 intermediate in the keychain to
+          # build the trust chain up to the root — without it, signing fails
+          # with "unable to build chain to self-signed root" (errSecInternalComponent).
+          curl -sL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security add-certificates -k "$KEYCHAIN_PATH" "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+          security import "$CERT_PATH" -P "$BUILD_CERTIFICATE_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          mkdir -p ~/Library/MobileDevice/"Provisioning Profiles"
+          echo -n "$BUILD_PROVISIONING_PROFILE" | base64 --decode -o "$PROFILE_PATH"
+          UUID=$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -)
+          cp "$PROFILE_PATH" ~/Library/MobileDevice/"Provisioning Profiles"/"$UUID.mobileprovision"
+
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+        env:
+          BUILD_CERTIFICATE_P12: ${{ secrets.BUILD_CERTIFICATE_P12 }}
+          BUILD_CERTIFICATE_PASSWORD: ${{ secrets.BUILD_CERTIFICATE_PASSWORD }}
+          BUILD_PROVISIONING_PROFILE: ${{ secrets.BUILD_PROVISIONING_PROFILE }}
+
       - name: Compute version and build number
         id: version
         run: |
@@ -148,7 +189,6 @@ jobs:
             -archivePath build/Drokpo.xcarchive \
             CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build_number }} \
             archive \
-            -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
@@ -159,7 +199,6 @@ jobs:
             -exportArchive \
             -archivePath build/Drokpo.xcarchive \
             -exportOptionsPlist ci/exportOptions.plist \
-            -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
@@ -171,3 +210,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "TestFlight build ${{ steps.version.outputs.build_number }}"
           git push origin "$TAG"
+
+      - name: Clean up signing keychain
+        if: always()
+        run: |
+          [ -n "$KEYCHAIN_PATH" ] && security delete-keychain "$KEYCHAIN_PATH" || true
