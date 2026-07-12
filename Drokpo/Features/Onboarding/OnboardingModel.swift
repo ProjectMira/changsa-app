@@ -4,7 +4,7 @@ import SwiftUI
 @Observable
 final class OnboardingModel {
     enum Step: Int, CaseIterable {
-        case basics, details, socials, location, photos
+        case basics, details, aboutYou, socials, location, photos
     }
 
     var step: Step = .basics
@@ -19,6 +19,11 @@ final class OnboardingModel {
     var languages: Set<String> = []
     var interests: Set<String> = []
     var bio = ""
+
+    // About you — work, study, and the optional friendship prompts.
+    var occupation = ""
+    var education = ""
+    var answers: [String: String] = [:]
 
     // Socials
     var instagram = ""
@@ -50,6 +55,8 @@ final class OnboardingModel {
             return !displayName.trimmingCharacters(in: .whitespaces).isEmpty && !gender.isEmpty
         case .details:
             return !region.isEmpty && !languages.isEmpty
+        case .aboutYou:
+            return true // every prompt is optional
         case .socials:
             // Instagram is the one social the backend requires on every profile.
             return !trimmedInstagram.isEmpty && acceptedTerms
@@ -88,9 +95,15 @@ final class OnboardingModel {
             dob: Profile.dobFormatter.string(from: dob),
             gender: gender.isEmpty ? nil : gender,
             bio: bio,
+            occupation: occupation.trimmingCharacters(in: .whitespaces),
+            education: education,
             region: region,
             languages: Array(languages),
             interests: Array(interests),
+            answers: answers.compactMapValues {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            },
             socials: Socials(instagram: trimmedInstagram),
             location: location ?? Vocabulary.regionCoordinates[region] ?? GeoLocation(lat: 0, lng: 0),
             preferences: Preferences()
@@ -103,17 +116,23 @@ final class OnboardingModel {
         }
     }
 
+    /// Photos confirmed with the backend so far. Uploads run in pick order, so
+    /// a retry after a mid-batch failure resumes from the first unconfirmed
+    /// photo instead of re-uploading (and duplicating) the earlier ones.
+    private var confirmedPhotoCount = 0
+
     @MainActor
     private func uploadPhotosAndComplete() async {
         isSubmitting = true
         defer { isSubmitting = false }
         do {
-            for (index, image) in pickedImages.enumerated() {
+            for (index, image) in pickedImages.enumerated().dropFirst(confirmedPhotoCount) {
                 let storagePath = try await PhotoUploader.upload(image)
                 let _: EmptyResponse = try await APIClient.shared.post(
                     "/api/onboarding/photos/confirm",
                     body: PhotoConfirm(storagePath: storagePath, order: index)
                 )
+                confirmedPhotoCount = index + 1
             }
             let _: EmptyResponse = try await APIClient.shared.post("/api/onboarding/complete")
             completed = true

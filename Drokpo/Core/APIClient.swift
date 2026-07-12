@@ -66,9 +66,6 @@ final class APIClient {
     ) async throws -> T {
         guard let user = Auth.auth().currentUser else { throw APIError.notAuthenticated }
         let token = try await user.getIDToken()
-        #if DEBUG
-        print("DROKPO_DEBUG_TOKEN: \(token)")
-        #endif
 
         var components = URLComponents(
             url: AppConfig.apiBaseURL.appending(path: path),

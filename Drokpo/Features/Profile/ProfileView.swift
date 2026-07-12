@@ -24,6 +24,7 @@ struct ProfileView: View {
             List {
                 photosSection
                 aboutSection
+                promptsSection
                 socialsSection
                 preferencesSection
                 accountSection
@@ -193,6 +194,29 @@ struct ProfileView: View {
         }
     }
 
+    private var promptsSection: some View {
+        Section {
+            let answered = Vocabulary.questions.compactMap { question -> (label: String, answer: String)? in
+                guard let answer = profile?.answers?[question.key], !answer.isEmpty else { return nil }
+                return (question.label, answer)
+            }
+            if answered.isEmpty {
+                Text("Answer a few prompts in Edit — they're the easiest way to start conversations.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(answered, id: \.label) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.label).font(.caption).foregroundStyle(.secondary)
+                        Text(item.answer)
+                    }
+                }
+            }
+        } header: {
+            Text("Prompts")
+        }
+    }
+
     private var socialsSection: some View {
         Section("Socials") {
             row("Instagram", profile?.socials?.instagram.map { "@\($0)" })
@@ -281,6 +305,7 @@ struct EditProfileView: View {
     @State private var region: String
     @State private var languages: Set<String>
     @State private var interests: Set<String>
+    @State private var answers: [String: String]
     @State private var instagram: String
     @State private var youtube: String
     @State private var tiktok: String
@@ -305,6 +330,7 @@ struct EditProfileView: View {
         _region = State(initialValue: profile.region ?? "")
         _languages = State(initialValue: Set(profile.languages ?? []))
         _interests = State(initialValue: Set(profile.interests ?? []))
+        _answers = State(initialValue: profile.answers ?? [:])
         _instagram = State(initialValue: profile.socials?.instagram ?? "")
         _youtube = State(initialValue: profile.socials?.youtube ?? "")
         _tiktok = State(initialValue: profile.socials?.tiktok ?? "")
@@ -328,6 +354,15 @@ struct EditProfileView: View {
         return Vocabulary.regions
     }
 
+    /// Same passthrough for education: profiles created before the picker
+    /// existed may hold free text that isn't among the level options.
+    private var educationOptions: [String] {
+        if !education.isEmpty, !Vocabulary.educationLevels.contains(education) {
+            return [education] + Vocabulary.educationLevels
+        }
+        return Vocabulary.educationLevels
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -345,7 +380,10 @@ struct EditProfileView: View {
                         displayedComponents: .date
                     )
                     TextField("Occupation", text: $occupation)
-                    TextField("Education", text: $education)
+                    Picker("Education", selection: $education) {
+                        Text("Not set").tag("")
+                        ForEach(educationOptions, id: \.self) { Text($0).tag($0) }
+                    }
                     Picker("Region", selection: $region) {
                         Text("Not set").tag("")
                         ForEach(regionOptions, id: \.self) { Text($0).tag($0) }
@@ -390,6 +428,7 @@ struct EditProfileView: View {
                         }
                     }
                 }
+                ProfileQuestionFields(answers: $answers)
                 Section("Discovery preferences") {
                     VStack(alignment: .leading) {
                         Text("Age: \(Int(ageRange.lowerBound))–\(Int(ageRange.upperBound))")
@@ -476,6 +515,10 @@ struct EditProfileView: View {
             region: region,
             languages: Array(languages),
             interests: Array(interests),
+            answers: answers.compactMapValues {
+                let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            },
             socials: Socials(
                 instagram: trimmedInstagram,
                 youtube: youtube.trimmingCharacters(in: .whitespaces),

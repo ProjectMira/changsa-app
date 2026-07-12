@@ -17,7 +17,7 @@ struct SignInView: View {
                     .frame(width: 96, height: 96)
                 Text("Drokpo")
                     .font(.largeTitle.bold())
-                Text("Find your person in the Tibetan community")
+                Text("Make friends and find your people in the Tibetan community")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

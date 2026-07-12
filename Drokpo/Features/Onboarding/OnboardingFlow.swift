@@ -18,6 +18,7 @@ struct OnboardingFlow: View {
                     switch model.step {
                     case .basics: BasicsStep(model: model)
                     case .details: DetailsStep(model: model)
+                    case .aboutYou: AboutYouStep(model: model)
                     case .socials: SocialsStep(model: model)
                     case .location: LocationStep(model: model)
                     case .photos: PhotosStep(model: model)
@@ -97,6 +98,29 @@ private struct BasicsStep: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Optional get-to-know-you step: work, study, and the friendship prompts.
+/// Everything here can be skipped and filled in later from Edit profile.
+private struct AboutYouStep: View {
+    @Bindable var model: OnboardingModel
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Occupation or current job", text: $model.occupation)
+                Picker("Education", selection: $model.education) {
+                    Text("Select").tag("")
+                    ForEach(Vocabulary.educationLevels, id: \.self) { Text($0).tag($0) }
+                }
+            } header: {
+                Text("Work & study")
+            } footer: {
+                Text("All of this is optional — answer what you like. It helps people find things in common with you.")
+            }
+            ProfileQuestionFields(answers: $model.answers)
         }
     }
 }

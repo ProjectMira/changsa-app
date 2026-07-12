@@ -45,6 +45,7 @@ struct Profile: Codable, Equatable, Identifiable {
     var region: String?
     var languages: [String]?
     var interests: [String]?
+    var answers: [String: String]?
     var socials: Socials?
     var photos: [Photo]?
     var preferences: Preferences?
@@ -77,6 +78,7 @@ struct Profile: Codable, Equatable, Identifiable {
             education: education,
             languages: languages,
             interests: interests,
+            answers: answers,
             socials: socials,
             photos: photos
         )
@@ -94,6 +96,7 @@ struct FeedCard: Codable, Equatable, Identifiable {
     var education: String?
     var languages: [String]?
     var interests: [String]?
+    var answers: [String: String]?
     var socials: Socials?
     var photos: [Photo]?
     var distanceKm: Double?
@@ -105,6 +108,37 @@ struct FeedCard: Codable, Equatable, Identifiable {
         guard let dob, let date = Profile.dobFormatter.date(from: dob) else { return nil }
         return Calendar.current.dateComponents([.year], from: date, to: .now).year
     }
+}
+
+/// A sponsored card served with the feed (see backend docs/ADS.md). Shown in
+/// the Discover deck after every few real profiles; liking it opens `linkUrl`
+/// in the in-app browser instead of recording a swipe.
+struct AdCard: Codable, Equatable, Identifiable {
+    var adId: String
+    var title: String?
+    var body: String?
+    var linkUrl: String?
+    var ctaLabel: String?
+    var imageUrl: String?
+    var photos: [Photo]?
+
+    var id: String { adId }
+
+    var url: URL? { linkUrl.flatMap(URL.init(string:)) }
+
+    /// Creative to render — `photos` if present, else `imageUrl` wrapped as a
+    /// single photo (the synthetic storagePath only serves as a cache key).
+    var displayPhotos: [Photo] {
+        if let photos, !photos.isEmpty { return photos }
+        if let imageUrl { return [Photo(storagePath: "ad-image-\(adId)", order: 0, url: imageUrl)] }
+        return []
+    }
+}
+
+/// GET /api/feed response: real profiles plus the active sponsored cards.
+struct FeedResponse: Decodable {
+    var candidates: [FeedCard]?
+    var ads: [AdCard]?
 }
 
 struct LastMessage: Codable, Equatable {
@@ -212,9 +246,12 @@ struct OnboardingIn: Encodable {
     var dob: String
     var gender: String?
     var bio: String
+    var occupation: String
+    var education: String
     var region: String
     var languages: [String]
     var interests: [String]
+    var answers: [String: String]
     var socials: Socials
     var location: GeoLocation
     var preferences: Preferences
@@ -239,6 +276,7 @@ struct ProfileUpdate: Encodable {
     var region: String?
     var languages: [String]?
     var interests: [String]?
+    var answers: [String: String]?
     var socials: Socials?
     var location: GeoLocation?
     var preferences: Preferences?
@@ -266,6 +304,29 @@ struct ReportIn: Encodable {
     var note: String
 }
 
+/// POST /api/ads/{adId}/events — fire-and-forget ad analytics.
+struct AdEventIn: Encodable {
+    var event: String // "impression" | "click"
+}
+
+// MARK: - Profile questions
+
+/// A profile prompt shown during onboarding/editing and rendered on the
+/// profile detail card. `key` is the stable id stored in the profile's
+/// `answers` map — never change a key once shipped.
+struct ProfileQuestion: Identifiable {
+    enum Kind {
+        case choice([String])
+        case text(placeholder: String)
+    }
+
+    let key: String
+    let label: String
+    let kind: Kind
+
+    var id: String { key }
+}
+
 // MARK: - Shared vocabulary
 
 enum Vocabulary {
@@ -279,6 +340,34 @@ enum Vocabulary {
         "Momo cooking", "Gorshey", "Hiking", "Music", "Photography",
         "Reading", "Meditation", "Thangka painting", "Basketball", "Soccer",
         "Movies", "Travel", "Board games", "Volunteering",
+        "Cooking", "Dancing", "Singing", "Art & design", "Gaming",
+        "Cricket", "Chess", "Fitness", "Buddhism & philosophy", "Language exchange",
+    ]
+    static let educationLevels = [
+        "High school", "Some college", "Bachelor's", "Master's", "PhD",
+        "Monastic education", "Other",
+    ]
+    /// Friendship-flavoured prompts; all optional. Answers live in the
+    /// profile's `answers` map keyed by `ProfileQuestion.key`.
+    static let questions: [ProfileQuestion] = [
+        .init(key: "lookingFor", label: "I'm here for", kind: .choice([
+            "New friends", "Dating", "Friends first, then who knows", "Community & events",
+        ])),
+        .init(key: "teaChoice", label: "Chai or butter tea?", kind: .choice([
+            "Chai", "Butter tea", "Both, please", "Coffee person",
+        ])),
+        .init(key: "travelledTo", label: "Places I've travelled to", kind: .text(
+            placeholder: "Dharamshala, Kathmandu, New York…"
+        )),
+        .init(key: "favoriteMovies", label: "Movies I can rewatch forever", kind: .text(
+            placeholder: "Your comfort films"
+        )),
+        .init(key: "favoriteMusic", label: "Songs on repeat", kind: .text(
+            placeholder: "Artists or songs you love right now"
+        )),
+        .init(key: "perfectWeekend", label: "My perfect weekend", kind: .text(
+            placeholder: "Hiking? Momo party? Netflix?"
+        )),
     ]
     static let reportReasons = ["Fake profile", "Inappropriate photos", "Harassment", "Spam", "Underage", "Other"]
 

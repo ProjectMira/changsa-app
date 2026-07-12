@@ -19,6 +19,9 @@ struct ChatThreadView: View {
     @State private var draft = ""
     @State private var isSending = false
     @State private var registration: ListenerRegistration?
+    /// Last message id we've sent a read receipt for, so snapshot churn
+    /// doesn't spam POST /read.
+    @State private var lastMarkedMessageId: String?
     @State private var errorMessage: String?
     @State private var showUnmatchConfirm = false
     @State private var showBlockConfirm = false
@@ -247,6 +250,11 @@ struct ChatThreadView: View {
         // Reads the live entry (not a stale captured copy), so the unread guard
         // reflects the current count.
         guard (entry?.unread ?? 0) > 0 || messages.last?.senderId != session.uid else { return }
+        // The listener fires on every snapshot (including our own sends and
+        // presence-style updates); only POST when there's actually a new
+        // incoming message since the last read receipt.
+        guard let lastId = messages.last?.id, lastId != lastMarkedMessageId else { return }
+        lastMarkedMessageId = lastId
         chats.clearUnread(matchId: matchId)
         Task {
             let _: EmptyResponse? = try? await APIClient.shared.post("/api/matches/\(matchId)/read")

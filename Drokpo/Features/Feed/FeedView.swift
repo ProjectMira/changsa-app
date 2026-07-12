@@ -9,7 +9,7 @@ struct FeedView: View {
             ZStack {
                 if model.isLoading {
                     ProgressView()
-                } else if model.cards.isEmpty {
+                } else if model.deck.isEmpty {
                     emptyState
                 } else {
                     deck
@@ -18,7 +18,19 @@ struct FeedView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle("Discover")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        model.undoLastSwipe()
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                    }
+                    .disabled(!model.canUndo)
+                    .accessibilityLabel("Undo last swipe")
+                }
+            }
             .task { await model.loadInitial() }
+            .onChange(of: model.deck.first?.id) { model.reportTopImpressionIfNeeded() }
             .overlay {
                 if let matched = model.matchedCard {
                     MatchOverlay(card: matched) { model.matchedCard = nil }
@@ -55,6 +67,12 @@ struct FeedView: View {
                 }
                 .presentationDetents([.large])
             }
+            .sheet(item: $model.adToOpen) { ad in
+                if let url = ad.url {
+                    SafariView(url: url)
+                        .ignoresSafeArea()
+                }
+            }
         }
     }
 
@@ -62,26 +80,52 @@ struct FeedView: View {
         VStack(spacing: 16) {
             ZStack {
                 // Top 3 cards; the last in this array renders on top.
-                ForEach(Array(model.cards.prefix(3).enumerated().reversed()), id: \.element.uid) { index, card in
-                    SwipeableCard(
-                        card: card,
-                        isTop: index == 0,
-                        onSwipe: { action in model.swipe(card, action: action) },
-                        onExpand: { expandedCard = card },
-                        onReport: { reason in model.reportAndRemove(card, reason: reason) },
-                        onBlock: { model.blockAndRemove(card) }
-                    )
-                    .scaleEffect(1 - CGFloat(index) * 0.03)
-                    .offset(y: CGFloat(index) * 10)
+                ForEach(Array(model.deck.prefix(3).enumerated().reversed()), id: \.element.id) { index, item in
+                    deckCard(item, isTop: index == 0)
+                        .scaleEffect(1 - CGFloat(index) * 0.03)
+                        .offset(y: CGFloat(index) * 10)
                 }
             }
             .padding(.horizontal)
 
             SwipeActionButtons(
-                onPass: { if let top = model.cards.first { model.swipe(top, action: .pass) } },
-                onLike: { if let top = model.cards.first { model.swipe(top, action: .like) } }
+                onPass: { topSwipe(liked: false) },
+                onLike: { topSwipe(liked: true) }
             )
             .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func deckCard(_ item: DeckItem, isTop: Bool) -> some View {
+        switch item {
+        case .profile(let card):
+            SwipeableCard(
+                card: card,
+                isTop: isTop,
+                onSwipe: { action in model.swipe(card, action: action) },
+                onExpand: { expandedCard = card },
+                onReport: { reason in model.reportAndRemove(card, reason: reason) },
+                onBlock: { model.blockAndRemove(card) }
+            )
+        case .ad(let ad):
+            SwipeableAdCard(
+                ad: ad,
+                isTop: isTop,
+                onSwipe: { liked in model.swipeAd(ad, liked: liked) }
+            )
+        }
+    }
+
+    /// Route the pass/like buttons to whatever sits on top of the deck.
+    private func topSwipe(liked: Bool) {
+        switch model.deck.first {
+        case .profile(let card):
+            model.swipe(card, action: liked ? .like : .pass)
+        case .ad(let ad):
+            model.swipeAd(ad, liked: liked)
+        case nil:
+            break
         }
     }
 
@@ -105,39 +149,26 @@ struct FeedView: View {
     }
 }
 
-private struct SwipeableCard: View {
-    let card: FeedCard
+/// Drag gesture, fly-off animation, and LIKE/PASS stamps shared by profile
+/// and sponsored cards. `likeLabel` lets the ad card stamp "VISIT" instead.
+private struct SwipeableWrapper<Content: View>: View {
     let isTop: Bool
-    let onSwipe: (SwipeAction) -> Void
-    let onExpand: () -> Void
-    let onReport: (String) -> Void
-    let onBlock: () -> Void
+    var likeLabel = "LIKE"
+    let onSwipe: (_ liked: Bool) -> Void
+    @ViewBuilder let content: () -> Content
 
     @State private var offset: CGSize = .zero
-    @State private var showSafetySheet = false
-    @State private var showReportReasons = false
 
     private let swipeThreshold: CGFloat = 110
 
     var body: some View {
-        CardView(card: card, onSafetyTapped: { showSafetySheet = true }, onExpand: isTop ? onExpand : nil)
+        content()
             .offset(offset)
             .rotationEffect(.degrees(Double(offset.width / 18)))
-            .overlay(alignment: .topLeading) { stamp("LIKE", color: .brandRed, visible: offset.width > 40) }
+            .overlay(alignment: .topLeading) { stamp(likeLabel, color: .brandRed, visible: offset.width > 40) }
             .overlay(alignment: .topTrailing) { stamp("PASS", color: .accentColor, visible: offset.width < -40) }
             .gesture(isTop ? dragGesture : nil)
             .animation(.spring(duration: 0.3), value: offset)
-            .confirmationDialog("Safety", isPresented: $showSafetySheet) {
-                Button("Report", role: .destructive) { showReportReasons = true }
-                Button("Block", role: .destructive) { onBlock() }
-                Button("Cancel", role: .cancel) {}
-            }
-            .confirmationDialog("Why are you reporting this profile?", isPresented: $showReportReasons, titleVisibility: .visible) {
-                ForEach(Vocabulary.reportReasons, id: \.self) { reason in
-                    Button(reason, role: .destructive) { onReport(reason) }
-                }
-                Button("Cancel", role: .cancel) {}
-            }
     }
 
     private var dragGesture: some Gesture {
@@ -146,10 +177,10 @@ private struct SwipeableCard: View {
             .onEnded { value in
                 if value.translation.width > swipeThreshold {
                     offset = CGSize(width: 600, height: value.translation.height)
-                    onSwipe(.like)
+                    onSwipe(true)
                 } else if value.translation.width < -swipeThreshold {
                     offset = CGSize(width: -600, height: value.translation.height)
-                    onSwipe(.pass)
+                    onSwipe(false)
                 } else {
                     offset = .zero
                 }
@@ -162,9 +193,51 @@ private struct SwipeableCard: View {
             .foregroundStyle(color)
             .padding(8)
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(color, lineWidth: 3))
-            .rotationEffect(.degrees(text == "LIKE" ? -15 : 15))
+            .rotationEffect(.degrees(text == "PASS" ? 15 : -15))
             .opacity(visible ? 1 : 0)
             .padding(24)
+    }
+}
+
+private struct SwipeableCard: View {
+    let card: FeedCard
+    let isTop: Bool
+    let onSwipe: (SwipeAction) -> Void
+    let onExpand: () -> Void
+    let onReport: (String) -> Void
+    let onBlock: () -> Void
+
+    @State private var showSafetySheet = false
+    @State private var showReportReasons = false
+
+    var body: some View {
+        SwipeableWrapper(isTop: isTop, onSwipe: { liked in onSwipe(liked ? .like : .pass) }) {
+            CardView(card: card, onSafetyTapped: { showSafetySheet = true }, onExpand: isTop ? onExpand : nil)
+        }
+        .confirmationDialog("Safety", isPresented: $showSafetySheet) {
+            Button("Report", role: .destructive) { showReportReasons = true }
+            Button("Block", role: .destructive) { onBlock() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Why are you reporting this profile?", isPresented: $showReportReasons, titleVisibility: .visible) {
+            ForEach(Vocabulary.reportReasons, id: \.self) { reason in
+                Button(reason, role: .destructive) { onReport(reason) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
+private struct SwipeableAdCard: View {
+    let ad: AdCard
+    let isTop: Bool
+    /// liked == true opens the ad link in the in-app browser.
+    let onSwipe: (_ liked: Bool) -> Void
+
+    var body: some View {
+        SwipeableWrapper(isTop: isTop, likeLabel: "VISIT", onSwipe: onSwipe) {
+            AdCardView(ad: ad, onOpen: isTop ? { onSwipe(true) } : nil)
+        }
     }
 }
 

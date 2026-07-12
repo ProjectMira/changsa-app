@@ -88,6 +88,23 @@ struct ProfileDetailView: View {
                         }
                         .padding(.top, 4)
                     }
+                    if !answeredQuestions.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(answeredQuestions, id: \.question.id) { item in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.question.label)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(item.answer)
+                                        .font(.body)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.5)))
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
                 }
             }
             .padding()
@@ -101,6 +118,16 @@ struct ProfileDetailView: View {
             Button("Later", role: .cancel) {}
         } message: {
             Text("You and \(card.displayName ?? "they") liked each other.")
+        }
+    }
+
+    /// The profile's prompt answers, in the vocabulary's order. Only known
+    /// question keys are shown, so retired questions vanish gracefully.
+    private var answeredQuestions: [(question: ProfileQuestion, answer: String)] {
+        Vocabulary.questions.compactMap { question in
+            guard let answer = card.answers?[question.key],
+                  !answer.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+            return (question, answer)
         }
     }
 
