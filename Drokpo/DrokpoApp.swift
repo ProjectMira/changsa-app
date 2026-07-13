@@ -60,10 +60,16 @@ struct RootView: View {
                     ProgressView()
                 case .signedOut:
                     SignInView()
+                case .choosingAccountType:
+                    AccountTypeChoiceView()
                 case .needsOnboarding:
                     OnboardingFlow()
-                case .active:
+                case .activePerson:
                     MainTabView()
+                case .needsCommunityOnboarding:
+                    CommunityOnboardingFlow()
+                case .activeCommunity:
+                    CommunityTabView()
                 case .failed:
                     VStack(spacing: 16) {
                         Text("Couldn't load your profile.")

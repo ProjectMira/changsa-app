@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MainTabView: View {
     enum Tab: Hashable {
-        case discover, likes, chats, profile
+        case discover, likes, communities, chats, profile
     }
 
     @Environment(SessionStore.self) private var session
@@ -18,6 +18,9 @@ struct MainTabView: View {
             LikesView()
                 .tabItem { Label("Likes", systemImage: "heart.fill") }
                 .tag(Tab.likes)
+            CommunitiesView()
+                .tabItem { Label("Communities", systemImage: "person.3.fill") }
+                .tag(Tab.communities)
             ChatsView()
                 .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right.fill") }
                 .badge(chats.totalUnread)

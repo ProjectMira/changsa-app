@@ -135,10 +135,243 @@ struct AdCard: Codable, Equatable, Identifiable {
     }
 }
 
-/// GET /api/feed response: real profiles plus the active sponsored cards.
+/// GET /api/feed response: real profiles plus every active content queue —
+/// ads, news, and community posts — that the Discover deck interleaves in.
 struct FeedResponse: Decodable {
     var candidates: [FeedCard]?
     var ads: [AdCard]?
+    var news: [NewsCard]?
+    var communityPosts: [CommunityPostCard]?
+}
+
+// MARK: - Communities
+
+struct ContactPerson: Codable, Equatable {
+    var name: String?
+    var role: String?
+    var phone: String?
+    var email: String?
+}
+
+struct CommunityAddress: Codable, Equatable {
+    var line1: String?
+    var city: String?
+    var state: String?
+    var country: String?
+    var postalCode: String?
+}
+
+/// A community/organization account — the alternative to `Profile` for the
+/// same Firebase Auth uid (see backend docs/COMMUNITIES.md). `joined` is only
+/// populated on directory/detail responses, not on `GET /api/communities/me`.
+struct CommunityProfile: Codable, Equatable, Identifiable {
+    var uid: String?
+    var name: String?
+    var description: String?
+    var website: String?
+    var phone: String?
+    var email: String?
+    var contactPerson: ContactPerson?
+    var address: CommunityAddress?
+    var socials: Socials?
+    var photos: [Photo]?
+    var verification: String?
+    var memberCount: Int?
+    var joined: Bool?
+
+    var id: String { uid ?? "community" }
+
+    var isVerified: Bool { verification == "verified" }
+    var isPending: Bool { verification == "pending" || verification == nil }
+}
+
+/// GET /api/account — the single call the app makes at launch to decide
+/// which experience (and which onboarding, if any) to route into.
+struct AccountResponse: Decodable {
+    var accountType: String?
+    var profile: Profile?
+    var community: CommunityProfile?
+}
+
+struct CommunityOnboardingIn: Encodable {
+    var name: String
+    var description: String
+    var website: String?
+    var phone: String?
+    var email: String?
+    var contactPerson: ContactPerson
+    var address: CommunityAddress
+    var socials: Socials?
+}
+
+struct CommunityUpdate: Encodable {
+    var name: String?
+    var description: String?
+    var website: String?
+    var phone: String?
+    var email: String?
+    var contactPerson: ContactPerson?
+    var address: CommunityAddress?
+    var socials: Socials?
+}
+
+struct CommunityPhotoConfirm: Encodable {
+    var storagePath: String
+    var order: Int
+}
+
+struct CommunityPhotoOrderUpdate: Encodable {
+    var storagePaths: [String]
+}
+
+/// One entry in a poll post: `id` is server-assigned and stable — never
+/// re-derive it client-side (votes reference it).
+struct PollOption: Codable, Equatable, Identifiable {
+    var id: String
+    var label: String
+}
+
+struct Poll: Codable, Equatable {
+    var options: [PollOption]
+    var counts: [String: Int]
+
+    var totalVotes: Int { counts.values.reduce(0, +) }
+
+    func percentage(for optionId: String) -> Double {
+        guard totalVotes > 0 else { return 0 }
+        return Double(counts[optionId] ?? 0) / Double(totalVotes)
+    }
+}
+
+/// A community's post, in one of four kinds — announcement, link, poll, or
+/// event. Shown on a community's page and interleaved into the Discover deck.
+struct CommunityPostCard: Codable, Equatable, Identifiable {
+    var postId: String
+    var communityId: String?
+    var communityName: String?
+    var communityLogoUrl: String?
+    var kind: String? // "announcement" | "link" | "poll" | "event"
+    var title: String?
+    var body: String?
+    var imageUrl: String?
+    var linkUrl: String?
+    var ctaLabel: String?
+    var poll: Poll?
+    /// Only meaningful to the owning community viewing its own posts list —
+    /// everyone else's query only ever returns active == true posts anyway.
+    var active: Bool?
+    var myVote: String?
+    /// ISO 8601 with a UTC offset — see `eventDate` for a parsed Date.
+    var eventAt: String?
+    var location: String?
+    var attendeeCount: Int?
+    var myRsvp: Bool?
+    var createdAt: String?
+
+    var id: String { postId }
+    var url: URL? { linkUrl.flatMap(URL.init(string:)) }
+
+    var eventDate: Date? {
+        guard let eventAt else { return nil }
+        return Self.isoFormatter.date(from: eventAt) ?? Self.isoFractionalFormatter.date(from: eventAt)
+    }
+
+    var displayPhotos: [Photo] {
+        guard let imageUrl else { return [] }
+        return [Photo(storagePath: "post-image-\(postId)", order: 0, url: imageUrl)]
+    }
+
+    private static let isoFormatter = ISO8601DateFormatter()
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
+struct CommunityPostIn: Encodable {
+    var kind: String
+    var title: String
+    var body: String = ""
+    var imageUrl: String?
+    var photoStoragePath: String?
+    var linkUrl: String?
+    var ctaLabel: String?
+    var pollOptions: [String]?
+    var eventAt: String?
+    var location: String?
+}
+
+struct CommunityPostUpdate: Encodable {
+    var title: String?
+    var body: String?
+    var imageUrl: String?
+    var linkUrl: String?
+    var ctaLabel: String?
+    var active: Bool?
+}
+
+struct VoteIn: Encodable {
+    var optionId: String
+}
+
+/// POST /api/posts/{postId}/vote response.
+struct VoteResult: Decodable {
+    var poll: Poll?
+    var myVote: String?
+}
+
+/// POST/DELETE /api/posts/{postId}/rsvp response.
+struct RsvpResult: Decodable {
+    var attendeeCount: Int?
+    var going: Bool?
+}
+
+/// A summarized news card for the Discover feed (see backend docs/DATA_SCHEMA.md
+/// `news/{newsId}`) — authored by the news-digest skill, never by the app.
+struct NewsCard: Codable, Equatable, Identifiable {
+    var newsId: String
+    var title: String?
+    var gist: String?
+    var summary: String?
+    var sourceUrl: String?
+    var sourceName: String?
+    var imageUrl: String?
+    var publishedAt: String?
+
+    var id: String { newsId }
+    var url: URL? { sourceUrl.flatMap(URL.init(string:)) }
+
+    var displayPhotos: [Photo] {
+        guard let imageUrl else { return [] }
+        return [Photo(storagePath: "news-image-\(newsId)", order: 0, url: imageUrl)]
+    }
+}
+
+/// GET /api/communities, GET /api/communities/mine
+struct CommunityListResponse: Decodable {
+    var communities: [CommunityProfile]?
+}
+
+/// GET /api/communities/{cid}/posts, GET /api/communities/feed
+struct CommunityPostsResponse: Decodable {
+    var posts: [CommunityPostCard]?
+}
+
+/// A slim member profile — GET /api/communities/{cid}/members deliberately
+/// never returns the full dating-card view (bio/socials/prompts stay out).
+struct CommunityMember: Codable, Equatable, Identifiable {
+    var uid: String
+    var displayName: String?
+    var photo: Photo?
+    var region: String?
+
+    var id: String { uid }
+}
+
+/// GET /api/communities/{cid}/members
+struct CommunityMembersResponse: Decodable {
+    var members: [CommunityMember]?
 }
 
 struct LastMessage: Codable, Equatable {
@@ -304,8 +537,9 @@ struct ReportIn: Encodable {
     var note: String
 }
 
-/// POST /api/ads/{adId}/events — fire-and-forget ad analytics.
-struct AdEventIn: Encodable {
+/// POST /api/{ads,news,posts}/{id}/events — fire-and-forget content analytics,
+/// same shape for all three content-card types the Discover deck shows.
+struct ContentEventIn: Encodable {
     var event: String // "impression" | "click"
 }
 

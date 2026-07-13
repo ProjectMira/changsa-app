@@ -3,6 +3,8 @@ import SwiftUI
 struct FeedView: View {
     @State private var model = FeedModel()
     @State private var expandedCard: FeedCard?
+    @State private var expandedNews: NewsCard?
+    @State private var expandedPost: CommunityPostCard?
 
     var body: some View {
         NavigationStack {
@@ -67,11 +69,39 @@ struct FeedView: View {
                 }
                 .presentationDetents([.large])
             }
-            .sheet(item: $model.adToOpen) { ad in
-                if let url = ad.url {
-                    SafariView(url: url)
-                        .ignoresSafeArea()
+            .sheet(item: $model.urlToOpen) { url in
+                SafariView(url: url)
+                    .ignoresSafeArea()
+            }
+            .sheet(item: $expandedNews) { item in
+                NewsDetailSheet(item: item) {
+                    expandedNews = nil
+                    model.urlToOpen = item.url
                 }
+                .presentationDetents([.large])
+            }
+            .sheet(item: $expandedPost) { post in
+                CommunityPostDetailSheet(
+                    post: post,
+                    onVote: { optionId in
+                        Task {
+                            if let updated = await model.vote(on: post, optionId: optionId) {
+                                expandedPost = updated
+                            }
+                        }
+                    },
+                    onRsvp: { going in
+                        Task {
+                            if let updated = await model.rsvp(on: post, going: going) {
+                                expandedPost = updated
+                            }
+                        }
+                    },
+                    onOpenLink: post.url.map { url in
+                        { expandedPost = nil; model.urlToOpen = url }
+                    }
+                )
+                .presentationDetents([.medium, .large])
             }
         }
     }
@@ -114,6 +144,20 @@ struct FeedView: View {
                 isTop: isTop,
                 onSwipe: { liked in model.swipeAd(ad, liked: liked) }
             )
+        case .news(let item):
+            SwipeableNewsCard(
+                item: item,
+                isTop: isTop,
+                onSwipe: { liked in model.swipeNews(item, liked: liked) },
+                onExpand: { expandedNews = item }
+            )
+        case .post(let post):
+            SwipeableCommunityPostCard(
+                post: post,
+                isTop: isTop,
+                onSwipe: { liked in model.swipePost(post, liked: liked) },
+                onExpand: { expandedPost = post }
+            )
         }
     }
 
@@ -124,6 +168,10 @@ struct FeedView: View {
             model.swipe(card, action: liked ? .like : .pass)
         case .ad(let ad):
             model.swipeAd(ad, liked: liked)
+        case .news(let item):
+            model.swipeNews(item, liked: liked)
+        case .post(let post):
+            model.swipePost(post, liked: liked)
         case nil:
             break
         }
@@ -237,6 +285,118 @@ private struct SwipeableAdCard: View {
     var body: some View {
         SwipeableWrapper(isTop: isTop, likeLabel: "VISIT", onSwipe: onSwipe) {
             AdCardView(ad: ad, onOpen: isTop ? { onSwipe(true) } : nil)
+        }
+    }
+}
+
+private struct SwipeableNewsCard: View {
+    let item: NewsCard
+    let isTop: Bool
+    /// liked == true opens the source article in the in-app browser.
+    let onSwipe: (_ liked: Bool) -> Void
+    let onExpand: () -> Void
+
+    var body: some View {
+        SwipeableWrapper(isTop: isTop, likeLabel: "READ", onSwipe: onSwipe) {
+            NewsCardView(
+                item: item,
+                onOpen: isTop ? { onSwipe(true) } : nil,
+                onExpand: isTop ? onExpand : nil
+            )
+        }
+    }
+}
+
+private struct SwipeableCommunityPostCard: View {
+    let post: CommunityPostCard
+    let isTop: Bool
+    /// liked == true RSVPs for an event, or opens the post's link if it has
+    /// one; for an announcement/poll with neither, it's a no-op dismiss.
+    let onSwipe: (_ liked: Bool) -> Void
+    let onExpand: () -> Void
+
+    private var likeLabel: String {
+        if post.kind == "event" { return "JOIN" }
+        return post.url != nil ? "VISIT" : "LIKE"
+    }
+
+    var body: some View {
+        SwipeableWrapper(isTop: isTop, likeLabel: likeLabel, onSwipe: onSwipe) {
+            CommunityPostCardView(
+                post: post,
+                onOpen: isTop && (post.kind == "event" || post.url != nil) ? { onSwipe(true) } : nil,
+                onExpand: isTop ? onExpand : nil
+            )
+        }
+    }
+}
+
+/// Tap-through detail for a news card: full summary, source attribution, and
+/// a button to open the source article in the in-app browser.
+private struct NewsDetailSheet: View {
+    let item: NewsCard
+    let onReadFullStory: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let photo = item.displayPhotos.first {
+                        RemotePhotoView(photo: photo)
+                            .aspectRatio(16 / 10, contentMode: .fill)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .clipped()
+                    }
+                    if let sourceName = item.sourceName, !sourceName.isEmpty {
+                        Text(sourceName.uppercased())
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(item.title ?? "—").font(.title2.bold())
+                    Text(item.summary?.isEmpty == false ? item.summary! : item.gist ?? "")
+                        .font(.body)
+                    Button("Read the full story") { onReadFullStory() }
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                }
+                .padding()
+            }
+            .navigationTitle("News")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// Tap-through detail for a community post: full body, poll voting (if a
+/// poll), RSVPing (if an event), and a link CTA (if it has one).
+private struct CommunityPostDetailSheet: View {
+    let post: CommunityPostCard
+    let onVote: (String) -> Void
+    let onRsvp: (Bool) -> Void
+    let onOpenLink: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                CommunityPostContentView(post: post, onVote: onVote, onRsvp: onRsvp, onOpenLink: onOpenLink)
+                    .padding()
+            }
+            .navigationTitle(post.communityName ?? "Community post")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
         }
     }
 }

@@ -22,9 +22,19 @@ enum PhotoUploader {
     /// for the backend confirm endpoints.
     static func upload(_ image: UIImage) async throws -> String {
         guard let uid = Auth.auth().currentUser?.uid else { throw PhotoUploaderError.notAuthenticated }
-        guard let data = downscaledJPEG(from: image) else { throw PhotoUploaderError.invalidImage }
+        return try await upload(image, toPath: "users/\(uid)/photos/\(UUID().uuidString).jpg")
+    }
 
-        let path = "users/\(uid)/photos/\(UUID().uuidString).jpg"
+    /// Same as `upload(_:)` but under a community's own Storage prefix
+    /// (`communities/{uid}/photos/…`, enforced by storage.rules).
+    static func uploadCommunityPhoto(_ image: UIImage) async throws -> String {
+        guard let uid = Auth.auth().currentUser?.uid else { throw PhotoUploaderError.notAuthenticated }
+        return try await upload(image, toPath: "communities/\(uid)/photos/\(UUID().uuidString).jpg")
+    }
+
+    @discardableResult
+    private static func upload(_ image: UIImage, toPath path: String) async throws -> String {
+        guard let data = downscaledJPEG(from: image) else { throw PhotoUploaderError.invalidImage }
         let ref = Storage.storage().reference(withPath: path)
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
