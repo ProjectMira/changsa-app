@@ -54,6 +54,10 @@ final class APIClient {
         try await request(method: "PATCH", path: path, query: [], bodyData: try encoder.encode(body))
     }
 
+    func put<T: Decodable>(_ path: String) async throws -> T {
+        try await request(method: "PUT", path: path, query: [], bodyData: nil)
+    }
+
     func delete<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
         try await request(method: "DELETE", path: path, query: query, bodyData: nil)
     }

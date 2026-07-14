@@ -144,6 +144,133 @@ struct FeedResponse: Decodable {
     var communityPosts: [CommunityPostCard]?
 }
 
+// MARK: - Typed feed items
+
+/// Decodes to nil instead of sinking the whole array when one element is
+/// malformed or has an unknown type (forward compatibility with future card
+/// kinds the backend may start serving).
+struct FailableItem<Wrapped: Decodable>: Decodable {
+    let value: Wrapped?
+
+    init(from decoder: Decoder) throws {
+        value = try? Wrapped(from: decoder)
+    }
+}
+
+/// One entry in a server-ordered feed: `{"type": ..., "data": {...}}`.
+enum FeedItem: Decodable, Identifiable {
+    case person(FeedCard)
+    case ad(AdCard)
+    case news(NewsCard)
+    case post(CommunityPostCard)
+
+    var id: String {
+        switch self {
+        case .person(let card): "person-\(card.uid)"
+        case .ad(let ad): "ad-\(ad.adId)"
+        case .news(let item): "news-\(item.newsId)"
+        case .post(let post): "post-\(post.postId)"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case type, data }
+    private struct UnknownTypeError: Error {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .type) {
+        case "person": self = .person(try container.decode(FeedCard.self, forKey: .data))
+        case "ad": self = .ad(try container.decode(AdCard.self, forKey: .data))
+        case "news": self = .news(try container.decode(NewsCard.self, forKey: .data))
+        case "communityPost": self = .post(try container.decode(CommunityPostCard.self, forKey: .data))
+        default: throw UnknownTypeError() // FailableItem maps this to nil
+        }
+    }
+}
+
+/// GET /api/feed decoded shape-agnostically: `items` when the server mixes
+/// (?shape=items), or the legacy parallel arrays from an older backend —
+/// FeedModel falls back to client-side mixing in that case.
+struct FeedPage: Decodable {
+    var items: [FeedItem]?
+    var candidates: [FeedCard]?
+    var ads: [AdCard]?
+    var news: [NewsCard]?
+    var communityPosts: [CommunityPostCard]?
+
+    private enum CodingKeys: String, CodingKey { case items, candidates, ads, news, communityPosts }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = (try container.decodeIfPresent([FailableItem<FeedItem>].self, forKey: .items))?
+            .compactMap(\.value)
+        candidates = try container.decodeIfPresent([FeedCard].self, forKey: .candidates)
+        ads = try container.decodeIfPresent([AdCard].self, forKey: .ads)
+        news = try container.decodeIfPresent([NewsCard].self, forKey: .news)
+        communityPosts = try container.decodeIfPresent([CommunityPostCard].self, forKey: .communityPosts)
+    }
+}
+
+/// GET /api/communities/home — the joined-communities rail plus a typed feed
+/// of their posts with sponsored cards interleaved.
+struct CommunitiesHomeResponse: Decodable {
+    var communities: [CommunityProfile]?
+    var items: [FeedItem]?
+
+    private enum CodingKeys: String, CodingKey { case communities, items }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        communities = try container.decodeIfPresent([CommunityProfile].self, forKey: .communities)
+        items = (try container.decodeIfPresent([FailableItem<FeedItem>].self, forKey: .items))?
+            .compactMap(\.value)
+    }
+}
+
+/// One saved (liked) content card from GET /api/likes/content.
+enum LikedContent: Decodable, Identifiable {
+    case news(NewsCard, likedAt: String?)
+    case post(CommunityPostCard, likedAt: String?)
+
+    var id: String {
+        switch self {
+        case .news(let item, _): "liked-news-\(item.newsId)"
+        case .post(let post, _): "liked-post-\(post.postId)"
+        }
+    }
+
+    var likedAt: String? {
+        switch self {
+        case .news(_, let likedAt), .post(_, let likedAt): likedAt
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case type, likedAt, data }
+    private struct UnknownTypeError: Error {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let likedAt = try container.decodeIfPresent(String.self, forKey: .likedAt)
+        switch try container.decode(String.self, forKey: .type) {
+        case "news": self = .news(try container.decode(NewsCard.self, forKey: .data), likedAt: likedAt)
+        case "communityPost": self = .post(try container.decode(CommunityPostCard.self, forKey: .data), likedAt: likedAt)
+        default: throw UnknownTypeError()
+        }
+    }
+}
+
+struct LikedContentResponse: Decodable {
+    var items: [LikedContent]?
+
+    private enum CodingKeys: String, CodingKey { case items }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = (try container.decodeIfPresent([FailableItem<LikedContent>].self, forKey: .items))?
+            .compactMap(\.value)
+    }
+}
+
 // MARK: - Communities
 
 struct ContactPerson: Codable, Equatable {

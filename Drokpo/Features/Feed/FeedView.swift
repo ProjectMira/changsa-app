@@ -79,6 +79,7 @@ struct FeedView: View {
             }
             .sheet(item: $expandedNews, onDismiss: presentPendingURL) { item in
                 NewsDetailSheet(item: item) {
+                    model.reportNewsClick(item)
                     pendingURL = item.url
                     expandedNews = nil
                 }
@@ -102,7 +103,7 @@ struct FeedView: View {
                         }
                     },
                     onOpenLink: post.url.map { url in
-                        { pendingURL = url; expandedPost = nil }
+                        { model.reportPostClick(post); pendingURL = url; expandedPost = nil }
                     }
                 )
                 .presentationDetents([.medium, .large])
@@ -128,23 +129,23 @@ struct FeedView: View {
         model.urlToOpen = url
     }
 
+    /// Tinder-style deck: the card fills the available space edge-to-edge and
+    /// the pass/like buttons float over its bottom instead of sitting below.
     private var deck: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                // Top 3 cards; the last in this array renders on top.
-                ForEach(Array(model.deck.prefix(3).enumerated().reversed()), id: \.element.id) { index, item in
-                    deckCard(item, isTop: index == 0)
-                        .scaleEffect(1 - CGFloat(index) * 0.03)
-                        .offset(y: CGFloat(index) * 10)
-                }
+        ZStack {
+            // Top 3 cards; the last in this array renders on top.
+            ForEach(Array(model.deck.prefix(3).enumerated().reversed()), id: \.element.id) { index, item in
+                deckCard(item, isTop: index == 0)
+                    .scaleEffect(1 - CGFloat(index) * 0.03)
+                    .offset(y: CGFloat(index) * 10)
             }
-            .padding(.horizontal)
-
+        }
+        .overlay(alignment: .bottom) {
             SwipeActionButtons(
                 onPass: { topSwipe(liked: false) },
                 onLike: { topSwipe(liked: true) }
             )
-            .padding(.bottom, 8)
+            .padding(.bottom, 20)
         }
     }
 
@@ -171,6 +172,7 @@ struct FeedView: View {
                 item: item,
                 isTop: isTop,
                 onSwipe: { liked in model.swipeNews(item, liked: liked) },
+                onOpenSource: { model.openNews(item) },
                 onExpand: { expandedNews = item }
             )
         case .post(let post):
@@ -178,6 +180,7 @@ struct FeedView: View {
                 post: post,
                 isTop: isTop,
                 onSwipe: { liked in model.swipePost(post, liked: liked) },
+                onOpenLink: { model.openPostLink(post) },
                 onExpand: { expandedPost = post }
             )
         }
@@ -314,15 +317,17 @@ private struct SwipeableAdCard: View {
 private struct SwipeableNewsCard: View {
     let item: NewsCard
     let isTop: Bool
-    /// liked == true opens the source article in the in-app browser.
+    /// liked == true SAVES the story to the Likes tab.
     let onSwipe: (_ liked: Bool) -> Void
+    /// Opens the source article in the in-app browser (arrow button).
+    let onOpenSource: () -> Void
     let onExpand: () -> Void
 
     var body: some View {
-        SwipeableWrapper(isTop: isTop, likeLabel: "READ", onSwipe: onSwipe) {
+        SwipeableWrapper(isTop: isTop, likeLabel: "SAVE", onSwipe: onSwipe) {
             NewsCardView(
                 item: item,
-                onOpen: isTop ? { onSwipe(true) } : nil,
+                onOpen: isTop ? onOpenSource : nil,
                 onExpand: isTop ? onExpand : nil
             )
         }
@@ -332,21 +337,23 @@ private struct SwipeableNewsCard: View {
 private struct SwipeableCommunityPostCard: View {
     let post: CommunityPostCard
     let isTop: Bool
-    /// liked == true RSVPs for an event, or opens the post's link if it has
-    /// one; for an announcement/poll with neither, it's a no-op dismiss.
+    /// liked == true SAVES the post to the Likes tab (and RSVPs for events).
     let onSwipe: (_ liked: Bool) -> Void
+    /// Opens the post's link in the in-app browser (CTA button).
+    let onOpenLink: () -> Void
     let onExpand: () -> Void
 
     private var likeLabel: String {
-        if post.kind == "event" { return "JOIN" }
-        return post.url != nil ? "VISIT" : "LIKE"
+        post.kind == "event" ? "JOIN" : "SAVE"
     }
 
     var body: some View {
         SwipeableWrapper(isTop: isTop, likeLabel: likeLabel, onSwipe: onSwipe) {
             CommunityPostCardView(
                 post: post,
-                onOpen: isTop && (post.kind == "event" || post.url != nil) ? { onSwipe(true) } : nil,
+                onOpen: isTop && (post.kind == "event" || post.url != nil)
+                    ? (post.url != nil ? onOpenLink : { onSwipe(true) })
+                    : nil,
                 onExpand: isTop ? onExpand : nil
             )
         }

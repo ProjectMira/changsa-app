@@ -70,27 +70,66 @@ final class FeedModel {
         isLoading = false
     }
 
+    /// Content cards saved (liked) this session — don't re-serve them when
+    /// the backend cycles the same news/ads again to keep the deck full.
+    private var likedContentIds: Set<String> = []
+
     @MainActor
     func fetchMore() async {
         guard !isFetching else { return }
         isFetching = true
         defer { isFetching = false }
         do {
-            let response: FeedResponse = try await APIClient.shared.get(
+            let page: FeedPage = try await APIClient.shared.get(
                 "/api/feed",
-                query: [URLQueryItem(name: "limit", value: "20")]
+                query: [
+                    URLQueryItem(name: "limit", value: "20"),
+                    URLQueryItem(name: "shape", value: "items"),
+                ]
             )
-            ads = response.ads ?? []
-            news = response.news ?? []
-            communityPosts = response.communityPosts ?? []
-            let known = Set(deck.compactMap { $0.profileCard?.uid })
-            let fresh = (response.candidates ?? []).filter {
-                !known.contains($0.uid) && !swipedUids.contains($0.uid)
+            if let items = page.items {
+                appendServerOrdered(items)
+            } else {
+                // Older backend without ?shape=items — legacy client mixing.
+                ads = page.ads ?? []
+                news = page.news ?? []
+                communityPosts = page.communityPosts ?? []
+                let known = Set(deck.compactMap { $0.profileCard?.uid })
+                let fresh = (page.candidates ?? []).filter {
+                    !known.contains($0.uid) && !swipedUids.contains($0.uid)
+                }
+                appendInterleaving(fresh)
             }
-            appendInterleaving(fresh)
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Appends a server-ordered page, dropping anything already in the deck,
+    /// already swiped, or already saved this session. The server keeps every
+    /// page topped up with content, so re-fetching once the deck runs low
+    /// cycles news/ads on repeat instead of going empty.
+    @MainActor
+    private func appendServerOrdered(_ items: [FeedItem]) {
+        var deckIds = Set(deck.map(\.id))
+        for item in items {
+            let deckItem: DeckItem
+            switch item {
+            case .person(let card):
+                guard !swipedUids.contains(card.uid) else { continue }
+                deckItem = .profile(card)
+            case .ad(let ad):
+                deckItem = .ad(ad)
+            case .news(let card):
+                deckItem = .news(card)
+            case .post(let post):
+                deckItem = .post(post)
+            }
+            guard !deckIds.contains(deckItem.id), !likedContentIds.contains(deckItem.id) else { continue }
+            deckIds.insert(deckItem.id)
+            deck.append(deckItem)
+        }
+        reportTopImpressionIfNeeded()
     }
 
     /// Appends profiles to the deck, inserting one content card after every
@@ -210,36 +249,71 @@ final class FeedModel {
         refillIfLow()
     }
 
-    /// A news card was swiped. Liking opens the source article in the in-app
-    /// browser — never the phone's browser; either way no swipe is recorded.
+    /// A news card was swiped. Liking SAVES the story to the Likes tab (the
+    /// source opens via the card's arrow button or the detail sheet, never
+    /// the swipe itself); no swipe is recorded either way.
     @MainActor
     func swipeNews(_ item: NewsCard, liked: Bool) {
         deck.removeAll { $0.id == "news-\(item.newsId)" }
         reportTopImpressionIfNeeded()
-        if liked, let url = item.url {
-            urlToOpen = url
-            reportContentEvent(path: "news/\(item.newsId)", event: "click")
+        if liked {
+            likedContentIds.insert("news-\(item.newsId)")
+            Task {
+                // Fire-and-forget save; failures must not interrupt swiping.
+                let _: NewsCard? = try? await APIClient.shared.put("/api/news/\(item.newsId)/like")
+            }
         }
         refillIfLow()
     }
 
-    /// A community post was swiped. Liking an event RSVPs (the "like"
-    /// gesture reads as "I'm coming"); liking anything else opens its link if
-    /// it has one (announcements and polls don't). Either way no swipe is
+    /// Opens a news card's source article in the in-app browser (arrow
+    /// button / detail sheet), counting the click. The card stays in the deck.
+    @MainActor
+    func openNews(_ item: NewsCard) {
+        guard let url = item.url else { return }
+        urlToOpen = url
+        reportContentEvent(path: "news/\(item.newsId)", event: "click")
+    }
+
+    /// Records the click when a detail sheet opens the source through the
+    /// pending-URL path (the sheet sets the URL itself on dismiss).
+    @MainActor
+    func reportNewsClick(_ item: NewsCard) {
+        reportContentEvent(path: "news/\(item.newsId)", event: "click")
+    }
+
+    @MainActor
+    func reportPostClick(_ post: CommunityPostCard) {
+        reportContentEvent(path: "posts/\(post.postId)", event: "click")
+    }
+
+    /// A community post was swiped. Liking SAVES the post to the Likes tab,
+    /// and for an event additionally RSVPs (the gesture reads as "I'm
+    /// coming"). Links open via the card's CTA, not the swipe. No swipe is
     /// recorded and the card leaves the deck immediately.
     @MainActor
     func swipePost(_ post: CommunityPostCard, liked: Bool) {
         deck.removeAll { $0.id == "post-\(post.postId)" }
         reportTopImpressionIfNeeded()
         if liked {
+            likedContentIds.insert("post-\(post.postId)")
+            Task {
+                let _: CommunityPostCard? = try? await APIClient.shared.put("/api/posts/\(post.postId)/like")
+            }
             if post.kind == "event" {
                 Task { _ = await rsvp(on: post, going: true) }
-            } else if let url = post.url {
-                urlToOpen = url
-                reportContentEvent(path: "posts/\(post.postId)", event: "click")
             }
         }
         refillIfLow()
+    }
+
+    /// Opens a link post's URL in the in-app browser (CTA button), counting
+    /// the click. The card stays in the deck.
+    @MainActor
+    func openPostLink(_ post: CommunityPostCard) {
+        guard let url = post.url else { return }
+        urlToOpen = url
+        reportContentEvent(path: "posts/\(post.postId)", event: "click")
     }
 
     private func refillIfLow() {

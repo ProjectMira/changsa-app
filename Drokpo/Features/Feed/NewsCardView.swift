@@ -50,16 +50,10 @@ struct NewsCardView: View {
                             .opacity(0.95)
                     }
                     if onOpen != nil {
-                        Button {
-                            onOpen?()
-                        } label: {
-                            Text("Read the full story")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 44)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top, 4)
+                        Label("Swipe right to save · arrow to read", systemImage: "hand.draw")
+                            .font(.caption.bold())
+                            .opacity(0.85)
+                            .padding(.top, 2)
                     }
                 }
                 .foregroundStyle(.white)
@@ -75,11 +69,18 @@ struct NewsCardView: View {
                     .padding(12)
             }
             .overlay(alignment: .topTrailing) {
-                if onExpand != nil {
-                    Image(systemName: "chevron.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(12)
+                // Explicit "open the source" affordance — a Button so it wins
+                // over the card's tap-to-expand gesture.
+                if onOpen != nil {
+                    Button {
+                        onOpen?()
+                    } label: {
+                        Image(systemName: "arrow.up.right.circle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.white, .black.opacity(0.45))
+                            .padding(10)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             // Whole card (photo, chevron, text) expands the detail sheet;
