@@ -97,17 +97,21 @@ private struct CommunityContactStep: View {
 
     var body: some View {
         Form {
-            Section("Contact info") {
+            Section {
                 TextField("Website (https://…)", text: $model.website)
                     .textContentType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Phone", text: $model.phone)
                     .textContentType(.telephoneNumber)
-                TextField("Email", text: $model.email)
+                TextField("Email (required)", text: $model.email)
                     .textContentType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+            } header: {
+                Text("Contact info")
+            } footer: {
+                Text("Email is required — verification updates about your community are sent there.")
             }
             Section {
                 socialField("Instagram", text: $model.instagram)
@@ -230,11 +234,19 @@ private struct CommunityPhotosStep: View {
             let items = selection
             selection = []
             Task {
+                var failed = 0
                 for item in items {
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
                         model.pickedImages.append(image)
+                    } else {
+                        failed += 1
                     }
+                }
+                if failed > 0 {
+                    model.errorMessage = failed == 1
+                        ? "One photo couldn't be loaded — try picking it again."
+                        : "\(failed) photos couldn't be loaded — try picking them again."
                 }
             }
         }

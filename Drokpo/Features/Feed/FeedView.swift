@@ -5,6 +5,10 @@ struct FeedView: View {
     @State private var expandedCard: FeedCard?
     @State private var expandedNews: NewsCard?
     @State private var expandedPost: CommunityPostCard?
+    /// Set instead of model.urlToOpen while a detail sheet is up — swapping
+    /// two sheets in one transaction is flaky; the Safari sheet presents from
+    /// the detail sheet's onDismiss instead.
+    @State private var pendingURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -73,14 +77,14 @@ struct FeedView: View {
                 SafariView(url: url)
                     .ignoresSafeArea()
             }
-            .sheet(item: $expandedNews) { item in
+            .sheet(item: $expandedNews, onDismiss: presentPendingURL) { item in
                 NewsDetailSheet(item: item) {
+                    pendingURL = item.url
                     expandedNews = nil
-                    model.urlToOpen = item.url
                 }
                 .presentationDetents([.large])
             }
-            .sheet(item: $expandedPost) { post in
+            .sheet(item: $expandedPost, onDismiss: presentPendingURL) { post in
                 CommunityPostDetailSheet(
                     post: post,
                     onVote: { optionId in
@@ -98,12 +102,30 @@ struct FeedView: View {
                         }
                     },
                     onOpenLink: post.url.map { url in
-                        { expandedPost = nil; model.urlToOpen = url }
+                        { pendingURL = url; expandedPost = nil }
                     }
                 )
                 .presentationDetents([.medium, .large])
+                // The root alert can't present while this sheet is up — a
+                // failed vote/RSVP must surface here, not silently no-op.
+                .alert("Something went wrong", isPresented: .init(
+                    get: { model.errorMessage != nil },
+                    set: { if !$0 { model.errorMessage = nil } }
+                )) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(model.errorMessage ?? "")
+                }
             }
         }
+    }
+
+    /// Presents a link queued by a detail sheet once that sheet is fully
+    /// dismissed (sheet-over-sheet swaps in one transaction are unreliable).
+    private func presentPendingURL() {
+        guard let url = pendingURL else { return }
+        pendingURL = nil
+        model.urlToOpen = url
     }
 
     private var deck: some View {

@@ -235,6 +235,20 @@ struct Poll: Codable, Equatable {
     var options: [PollOption]
     var counts: [String: Int]
 
+    // Decode defensively like every other response model: a poll doc missing
+    // counts/options (hand-edited in the console) must degrade to an empty
+    // poll, not fail the decode of the entire posts page it rides in.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        options = (try? container.decodeIfPresent([PollOption].self, forKey: .options)) ?? []
+        counts = (try? container.decodeIfPresent([String: Int].self, forKey: .counts)) ?? [:]
+    }
+
+    init(options: [PollOption], counts: [String: Int]) {
+        self.options = options
+        self.counts = counts
+    }
+
     var totalVotes: Int { counts.values.reduce(0, +) }
 
     func percentage(for optionId: String) -> Double {

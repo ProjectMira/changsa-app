@@ -61,7 +61,9 @@ struct CommunityPostCardView: View {
                                 .opacity(0.9)
                             Spacer()
                             if onOpen != nil {
-                                Text(post.myRsvp == true ? "You're in — swipe to change" : "Swipe right to join")
+                                // Right-swipe only ever RSVPs *in*; cancelling
+                                // happens in the detail sheet — say so.
+                                Text(post.myRsvp == true ? "You're going ✓ — tap for details" : "Swipe right to join")
                                     .font(.caption.bold())
                             }
                         }
@@ -85,8 +87,6 @@ struct CommunityPostCardView: View {
                 }
                 .foregroundStyle(.white)
                 .padding()
-                .contentShape(Rectangle())
-                .onTapGesture { onExpand?() }
             }
             .overlay(alignment: .topLeading) {
                 Text("Community")
@@ -105,6 +105,10 @@ struct CommunityPostCardView: View {
                         .padding(12)
                 }
             }
+            // Whole card (photo, chevron, text) expands the detail sheet;
+            // the CTA Button keeps priority over this ancestor gesture.
+            .contentShape(Rectangle())
+            .onTapGesture { onExpand?() }
             .clipShape(RoundedRectangle(cornerRadius: 20))
             .shadow(radius: 6, y: 3)
         }

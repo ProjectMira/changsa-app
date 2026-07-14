@@ -48,7 +48,9 @@ final class CommunityOnboardingModel {
         case .basics:
             return !name.trimmed.isEmpty && !communityDescription.trimmed.isEmpty
         case .contact:
-            return true // every field here is optional
+            // The backend requires a community email (the verification
+            // outcome is mailed there); everything else is optional.
+            return email.trimmed.contains("@")
         case .contactPerson:
             return !contactName.trimmed.isEmpty
         case .address:
@@ -64,13 +66,19 @@ final class CommunityOnboardingModel {
 
     /// Leaving the address step creates the community on the backend (all
     /// text fields collected so far); leaving the photos step just finishes —
-    /// any picked photos upload first.
+    /// any picked photos upload first. If the user goes Back after the
+    /// community was created and comes forward again, the edits are saved
+    /// with a PATCH instead of re-POSTing onboarding (which would 409).
     @MainActor
     func advance() async {
         guard canAdvance else { return }
         switch step {
         case .address:
-            await createCommunity()
+            if communityCreated {
+                await updateCommunity()
+            } else {
+                await createCommunity()
+            }
         case .photos:
             await uploadPhotosAndFinish()
         default:
@@ -82,6 +90,10 @@ final class CommunityOnboardingModel {
         let trimmed = text.trimmed
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    /// Set once POST /api/communities/onboarding succeeds — the doc now
+    /// exists, so going Back and Continuing again must PATCH, never re-POST.
+    private var communityCreated = false
 
     @MainActor
     private func createCommunity() async {
@@ -98,7 +110,7 @@ final class CommunityOnboardingModel {
             description: communityDescription.trimmed,
             website: nonEmpty(website),
             phone: nonEmpty(phone),
-            email: nonEmpty(email),
+            email: email.trimmed,
             contactPerson: ContactPerson(
                 name: contactName.trimmed,
                 role: nonEmpty(contactRole),
@@ -116,28 +128,73 @@ final class CommunityOnboardingModel {
         )
         do {
             let _: EmptyResponse = try await APIClient.shared.post("/api/communities/onboarding", body: body)
+            communityCreated = true
             step = .photos
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    /// Photos confirmed with the backend so far — same resume-after-failure
-    /// bookkeeping as OnboardingModel's person-photo upload.
-    private var confirmedPhotoCount = 0
+    /// Second pass over the address step after the community already exists:
+    /// persist whatever the user changed on the earlier steps via PATCH.
+    /// Optional fields go up as "" when emptied (the backend clears them);
+    /// instagram stays omit-when-empty — the backend never allows a blank.
+    @MainActor
+    private func updateCommunity() async {
+        isSubmitting = true
+        defer { isSubmitting = false }
+        let body = CommunityUpdate(
+            name: name.trimmed,
+            description: communityDescription.trimmed,
+            website: website.trimmed,
+            phone: phone.trimmed,
+            email: email.trimmed,
+            contactPerson: ContactPerson(
+                name: contactName.trimmed,
+                role: contactRole.trimmed,
+                phone: contactPhone.trimmed,
+                email: contactEmail.trimmed
+            ),
+            address: CommunityAddress(
+                line1: line1.trimmed,
+                city: city.trimmed,
+                state: state.trimmed,
+                country: country.trimmed,
+                postalCode: postalCode.trimmed
+            ),
+            socials: Socials(
+                instagram: nonEmpty(instagram),
+                youtube: youtube.trimmed,
+                tiktok: tiktok.trimmed,
+                facebook: facebook.trimmed
+            )
+        )
+        do {
+            let _: EmptyResponse = try await APIClient.shared.patch("/api/communities/me", body: body)
+            step = .photos
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Images already uploaded+confirmed with the backend, tracked by object
+    /// identity — positional counting breaks as soon as the user edits the
+    /// grid between a partial failure and the retry.
+    private var confirmedImages: Set<ObjectIdentifier> = []
 
     @MainActor
     private func uploadPhotosAndFinish() async {
         isSubmitting = true
         defer { isSubmitting = false }
         do {
-            for (index, image) in pickedImages.enumerated().dropFirst(confirmedPhotoCount) {
+            for (index, image) in pickedImages.enumerated()
+            where !confirmedImages.contains(ObjectIdentifier(image)) {
                 let storagePath = try await PhotoUploader.uploadCommunityPhoto(image)
                 let _: EmptyResponse = try await APIClient.shared.post(
                     "/api/communities/me/photos",
                     body: CommunityPhotoConfirm(storagePath: storagePath, order: index)
                 )
-                confirmedPhotoCount = index + 1
+                confirmedImages.insert(ObjectIdentifier(image))
             }
             completed = true
         } catch {

@@ -64,8 +64,6 @@ struct NewsCardView: View {
                 }
                 .foregroundStyle(.white)
                 .padding()
-                .contentShape(Rectangle())
-                .onTapGesture { onExpand?() }
             }
             .overlay(alignment: .topLeading) {
                 Text("News")
@@ -84,6 +82,10 @@ struct NewsCardView: View {
                         .padding(12)
                 }
             }
+            // Whole card (photo, chevron, text) expands the detail sheet;
+            // the CTA Button keeps priority over this ancestor gesture.
+            .contentShape(Rectangle())
+            .onTapGesture { onExpand?() }
             .clipShape(RoundedRectangle(cornerRadius: 20))
             .shadow(radius: 6, y: 3)
         }

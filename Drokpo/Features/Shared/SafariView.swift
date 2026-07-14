@@ -7,7 +7,13 @@ struct SafariView: UIViewControllerRepresentable {
     let url: URL
 
     func makeUIViewController(context: Context) -> SFSafariViewController {
-        SFSafariViewController(url: url)
+        // SFSafariViewController throws an NSException (crash) for anything
+        // but http(s). The backend validates link fields, but a Firestore doc
+        // edited outside those validators must not be able to crash the app.
+        let safeURL = (url.scheme == "https" || url.scheme == "http")
+            ? url
+            : URL(string: "https://drokpo-backend.web.app")!
+        return SFSafariViewController(url: safeURL)
     }
 
     func updateUIViewController(_ controller: SFSafariViewController, context: Context) {}

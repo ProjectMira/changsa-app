@@ -167,6 +167,13 @@ private enum PostKind: String, CaseIterable, Identifiable {
     }
 }
 
+/// A poll option being drafted. Identity-stable so removing a row can't
+/// re-bind neighbours mid-update (the crash-prone indices+remove(at:) combo).
+private struct PollOptionDraft: Identifiable {
+    let id = UUID()
+    var text = ""
+}
+
 struct CommunityPostComposerView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -175,7 +182,7 @@ struct CommunityPostComposerView: View {
     @State private var postBody = ""
     @State private var linkUrl = ""
     @State private var ctaLabel = ""
-    @State private var pollOptions: [String] = ["", ""]
+    @State private var pollOptions: [PollOptionDraft] = [PollOptionDraft(), PollOptionDraft()]
     @State private var eventDate = Date().addingTimeInterval(3600)
     @State private var eventLocation = ""
     @State private var photoSelection: PhotosPickerItem?
@@ -185,6 +192,10 @@ struct CommunityPostComposerView: View {
 
     let onSaved: () async -> Void
 
+    private var filledPollOptions: [String] {
+        pollOptions.map { $0.text.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     private var canSave: Bool {
         guard !title.trimmingCharacters(in: .whitespaces).isEmpty, !isSaving else { return false }
         switch kind {
@@ -193,7 +204,7 @@ struct CommunityPostComposerView: View {
         case .link:
             return linkUrl.trimmingCharacters(in: .whitespaces).hasPrefix("https://")
         case .poll:
-            let filled = pollOptions.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let filled = filledPollOptions
             return filled.count >= 2 && Set(filled).count == filled.count
         case .event:
             let trimmedLink = linkUrl.trimmingCharacters(in: .whitespaces)
@@ -255,12 +266,12 @@ struct CommunityPostComposerView: View {
                 }
                 if kind == .poll {
                     Section {
-                        ForEach(pollOptions.indices, id: \.self) { index in
+                        ForEach($pollOptions) { $option in
                             HStack {
-                                TextField("Option \(index + 1)", text: $pollOptions[index])
+                                TextField("Poll option", text: $option.text)
                                 if pollOptions.count > 2 {
                                     Button {
-                                        pollOptions.remove(at: index)
+                                        pollOptions.removeAll { $0.id == option.id }
                                     } label: {
                                         Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                                     }
@@ -268,7 +279,7 @@ struct CommunityPostComposerView: View {
                             }
                         }
                         if pollOptions.count < 4 {
-                            Button("Add option") { pollOptions.append("") }
+                            Button("Add option") { pollOptions.append(PollOptionDraft()) }
                         }
                     } header: {
                         Text("Options")
@@ -282,8 +293,13 @@ struct CommunityPostComposerView: View {
                             .resizable()
                             .scaledToFit()
                             .frame(maxHeight: 160)
+                        Button("Remove photo", role: .destructive) {
+                            self.pickedImage = nil
+                            photoSelection = nil
+                        }
                     }
-                    PhotosPicker("Choose photo", selection: $photoSelection, matching: .images)
+                    PhotosPicker(pickedImage == nil ? "Choose photo" : "Replace photo",
+                                 selection: $photoSelection, matching: .images)
                 }
             }
             .navigationTitle("New post")
@@ -307,6 +323,8 @@ struct CommunityPostComposerView: View {
                     if let data = try? await item.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
                         pickedImage = image
+                    } else {
+                        errorMessage = "That photo couldn't be loaded — try picking another one."
                     }
                 }
             }
@@ -332,15 +350,15 @@ struct CommunityPostComposerView: View {
             let payload = CommunityPostIn(
                 kind: kind.rawValue,
                 title: title.trimmingCharacters(in: .whitespaces),
-                body: postBody,
+                // The Description field is hidden for polls — don't let a
+                // draft typed under another kind leak into the poll.
+                body: kind == .poll ? "" : postBody,
                 photoStoragePath: photoStoragePath,
                 linkUrl: kind == .link
                     ? linkUrl.trimmingCharacters(in: .whitespaces)
                     : (kind == .event ? nonEmpty(linkUrl) : nil),
                 ctaLabel: (kind == .link || kind == .event) ? nonEmpty(ctaLabel) : nil,
-                pollOptions: kind == .poll
-                    ? pollOptions.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                    : nil,
+                pollOptions: kind == .poll ? filledPollOptions : nil,
                 eventAt: kind == .event ? ISO8601DateFormatter().string(from: eventDate) : nil,
                 location: kind == .event ? nonEmpty(eventLocation) : nil
             )

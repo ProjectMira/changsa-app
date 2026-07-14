@@ -102,7 +102,9 @@ private struct EventDetailsView: View {
 }
 
 /// Tappable poll options that animate to a percentage bar once the caller
-/// has voted (myVote != nil) or after a vote is cast.
+/// has voted (myVote != nil) or after a vote is cast. Voting again on a
+/// different option changes the vote (the backend moves the count); only
+/// the currently-selected option is disabled.
 private struct PollOptionsView: View {
     let poll: Poll
     let myVote: String?
@@ -117,7 +119,7 @@ private struct PollOptionsView: View {
                     optionRow(option)
                 }
                 .buttonStyle(.plain)
-                .disabled(onVote == nil || myVote != nil)
+                .disabled(onVote == nil || myVote == option.id)
             }
             if poll.totalVotes > 0 {
                 Text("\(poll.totalVotes) vote\(poll.totalVotes == 1 ? "" : "s")")

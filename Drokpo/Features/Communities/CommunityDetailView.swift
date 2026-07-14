@@ -141,15 +141,26 @@ struct CommunityDetailView: View {
         }
     }
 
+    /// Bumped on every join/leave; a load() started before the bump must not
+    /// overwrite joined/memberCount with its pre-toggle snapshot.
+    @State private var joinGeneration = 0
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
+        let generationAtFetch = joinGeneration
         async let communityResponse: CommunityProfile = APIClient.shared.get("/api/communities/\(cid)")
         async let postsResponse: CommunityPostsResponse = APIClient.shared.get(
             "/api/communities/\(cid)/posts", query: [URLQueryItem(name: "limit", value: "30")]
         )
         do {
-            let (communityResult, postsResult) = try await (communityResponse, postsResponse)
+            var (communityResult, postsResult) = try await (communityResponse, postsResponse)
+            if generationAtFetch != joinGeneration {
+                // A join/leave landed while this GET was in flight — keep the
+                // locally-updated membership state, take everything else.
+                communityResult.joined = community?.joined
+                communityResult.memberCount = community?.memberCount
+            }
             community = communityResult
             posts = postsResult.posts ?? []
         } catch {
@@ -171,6 +182,7 @@ struct CommunityDetailView: View {
                 community?.joined = true
                 community?.memberCount = (community?.memberCount ?? 0) + 1
             }
+            joinGeneration += 1
         } catch {
             errorMessage = error.localizedDescription
         }

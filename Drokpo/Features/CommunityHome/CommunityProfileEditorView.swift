@@ -29,10 +29,51 @@ struct CommunityProfileEditorView: View {
 
     @State private var photoSelection: PhotosPickerItem?
     @State private var isSaving = false
+    @State private var justSaved = false
     @State private var isWorking = false
     @State private var errorMessage: String?
 
     private var community: CommunityProfile? { session.myCommunity }
+
+    /// Do the text fields differ from what the session currently holds?
+    /// Guards the session-refresh reload (photo add/delete also refreshes the
+    /// session, and that must never wipe typed-but-unsaved edits).
+    private var isDirty: Bool {
+        guard let community else { return false }
+        return name != community.name ?? ""
+            || communityDescription != community.description ?? ""
+            || website != community.website ?? ""
+            || phone != community.phone ?? ""
+            || email != community.email ?? ""
+            || contactName != community.contactPerson?.name ?? ""
+            || contactRole != community.contactPerson?.role ?? ""
+            || contactPhone != community.contactPerson?.phone ?? ""
+            || contactEmail != community.contactPerson?.email ?? ""
+            || line1 != community.address?.line1 ?? ""
+            || city != community.address?.city ?? ""
+            || state != community.address?.state ?? ""
+            || country != community.address?.country ?? ""
+            || postalCode != community.address?.postalCode ?? ""
+            || instagram != community.socials?.instagram ?? ""
+            || youtube != community.socials?.youtube ?? ""
+            || tiktok != community.socials?.tiktok ?? ""
+            || facebook != community.socials?.facebook ?? ""
+    }
+
+    /// Client-side mirror of the backend's PATCH validation, so Save can't
+    /// fire a request that 422s with a context-free message.
+    private var saveBlocker: String? {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        if !(2...80).contains(trimmedName.count) { return "Name must be 2–80 characters." }
+        if communityDescription.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "Description can't be empty."
+        }
+        let trimmedWebsite = website.trimmingCharacters(in: .whitespaces)
+        if !trimmedWebsite.isEmpty && !trimmedWebsite.hasPrefix("https://") {
+            return "Website must start with https://."
+        }
+        return nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -47,10 +88,16 @@ struct CommunityProfileEditorView: View {
 
                 photosSection
 
-                Section("About") {
+                Section {
                     TextField("Name", text: $name)
                     TextField("Description", text: $communityDescription, axis: .vertical)
                         .lineLimit(3...8)
+                } header: {
+                    Text("About")
+                } footer: {
+                    if let saveBlocker, isDirty {
+                        Text(saveBlocker).foregroundStyle(.red)
+                    }
                 }
 
                 Section("Contact info") {
@@ -107,13 +154,23 @@ struct CommunityProfileEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await save() } }
-                        .disabled(isSaving || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if justSaved {
+                        Label("Saved", systemImage: "checkmark")
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(.green)
+                    } else if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") { Task { await save() } }
+                            .disabled(saveBlocker != nil)
+                    }
                 }
             }
             .overlay { if isWorking { ProgressView() } }
             .task { loadFromSession() }
-            .onChange(of: session.myCommunity) { loadFromSession() }
+            // Photo add/delete and pull-to-refresh update the session; only
+            // mirror that into the fields when nothing is typed-but-unsaved.
+            .onChange(of: session.myCommunity) { if !isDirty { loadFromSession() } }
             .refreshable { await session.refreshProfile() }
             .alert("Something went wrong", isPresented: .init(
                 get: { errorMessage != nil },
@@ -203,38 +260,49 @@ struct CommunityProfileEditorView: View {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private func trimmed(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespaces)
+    }
+
     private func save() async {
         isSaving = true
         defer { isSaving = false }
+        // Clearable optionals go up as "" when emptied — the backend deletes
+        // the stored value. Never-clearable fields (email, instagram, contact
+        // name, city, country) stay omit-when-empty, i.e. "unchanged".
         let body = CommunityUpdate(
-            name: name.trimmingCharacters(in: .whitespaces),
-            description: communityDescription.trimmingCharacters(in: .whitespaces),
-            website: nonEmpty(website),
-            phone: nonEmpty(phone),
+            name: trimmed(name),
+            description: trimmed(communityDescription),
+            website: trimmed(website),
+            phone: trimmed(phone),
             email: nonEmpty(email),
             contactPerson: ContactPerson(
                 name: nonEmpty(contactName),
-                role: nonEmpty(contactRole),
-                phone: nonEmpty(contactPhone),
-                email: nonEmpty(contactEmail)
+                role: trimmed(contactRole),
+                phone: trimmed(contactPhone),
+                email: trimmed(contactEmail)
             ),
             address: CommunityAddress(
-                line1: nonEmpty(line1),
+                line1: trimmed(line1),
                 city: nonEmpty(city),
-                state: nonEmpty(state),
+                state: trimmed(state),
                 country: nonEmpty(country),
-                postalCode: nonEmpty(postalCode)
+                postalCode: trimmed(postalCode)
             ),
             socials: Socials(
                 instagram: nonEmpty(instagram),
-                youtube: nonEmpty(youtube),
-                tiktok: nonEmpty(tiktok),
-                facebook: nonEmpty(facebook)
+                youtube: trimmed(youtube),
+                tiktok: trimmed(tiktok),
+                facebook: trimmed(facebook)
             )
         )
         do {
             let _: EmptyResponse = try await APIClient.shared.patch("/api/communities/me", body: body)
             await session.refreshProfile()
+            loadFromSession()
+            justSaved = true
+            try? await Task.sleep(for: .seconds(2))
+            justSaved = false
         } catch {
             errorMessage = error.localizedDescription
         }

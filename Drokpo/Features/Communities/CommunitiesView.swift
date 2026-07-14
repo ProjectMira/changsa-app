@@ -7,6 +7,7 @@ struct CommunitiesView: View {
     @State private var mine: [CommunityProfile] = []
     @State private var joinedFeed: [CommunityPostCard] = []
     @State private var isLoading = true
+    @State private var hasLoaded = false
     @State private var errorMessage: String?
     @State private var urlToOpen: URL?
 
@@ -75,6 +76,9 @@ struct CommunitiesView: View {
             .overlay { if isLoading && discover.isEmpty && mine.isEmpty { ProgressView() } }
             .refreshable { await load() }
             .task { await load() }
+            // Re-fires when popping back from a detail view (unlike .task),
+            // so a join/leave there is reflected in these lists immediately.
+            .onAppear { if hasLoaded { Task { await load() } } }
             .sheet(item: $urlToOpen) { url in
                 SafariView(url: url)
             }
@@ -114,6 +118,7 @@ struct CommunitiesView: View {
             discover = discoverResult.communities ?? []
             mine = mineResult.communities ?? []
             joinedFeed = feedResult.posts ?? []
+            hasLoaded = true
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -150,6 +155,7 @@ struct CommunitiesView: View {
 struct CommunityDirectoryView: View {
     @State private var communities: [CommunityProfile] = []
     @State private var isLoading = true
+    @State private var hasLoaded = false
     @State private var workingCid: String?
     @State private var errorMessage: String?
 
@@ -166,7 +172,11 @@ struct CommunityDirectoryView: View {
                     NavigationLink {
                         CommunityDetailView(cid: community.id, preview: community)
                     } label: {
-                        CommunityRow(community: community)
+                        HStack {
+                            CommunityRow(community: community)
+                            Spacer()
+                            joinButton(community)
+                        }
                     }
                 }
             }
@@ -176,6 +186,7 @@ struct CommunityDirectoryView: View {
         .overlay { if isLoading && communities.isEmpty { ProgressView() } }
         .refreshable { await load() }
         .task { await load() }
+        .onAppear { if hasLoaded { Task { await load() } } }
         .alert("Something went wrong", isPresented: .init(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -183,6 +194,44 @@ struct CommunityDirectoryView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    /// Inline join/leave — .bordered keeps the button independently tappable
+    /// inside the row's NavigationLink.
+    private func joinButton(_ community: CommunityProfile) -> some View {
+        Button {
+            Task { await toggleJoin(community) }
+        } label: {
+            if workingCid == community.id {
+                ProgressView().controlSize(.small)
+            } else {
+                Text(community.joined == true ? "Joined" : "Join")
+                    .font(.subheadline.bold())
+            }
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.small)
+        .tint(community.joined == true ? .secondary : .accentColor)
+        .disabled(workingCid != nil)
+    }
+
+    private func toggleJoin(_ community: CommunityProfile) async {
+        workingCid = community.id
+        defer { workingCid = nil }
+        let wasJoined = community.joined == true
+        do {
+            let _: EmptyResponse = wasJoined
+                ? try await APIClient.shared.delete("/api/communities/\(community.id)/join")
+                : try await APIClient.shared.post("/api/communities/\(community.id)/join")
+            if let index = communities.firstIndex(where: { $0.id == community.id }) {
+                communities[index].joined = !wasJoined
+                let delta = wasJoined ? -1 : 1
+                communities[index].memberCount = max(0, (communities[index].memberCount ?? 0) + delta)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -194,6 +243,7 @@ struct CommunityDirectoryView: View {
                 "/api/communities", query: [URLQueryItem(name: "limit", value: "50")]
             )
             communities = response.communities ?? []
+            hasLoaded = true
         } catch {
             errorMessage = error.localizedDescription
         }
