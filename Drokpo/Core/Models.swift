@@ -100,8 +100,16 @@ struct FeedCard: Codable, Equatable, Identifiable {
     var socials: Socials?
     var photos: [Photo]?
     var distanceKm: Double?
+    /// Additive discriminator: "person" | "community". Community accounts now
+    /// swipe/match/chat as themselves, served in this same person-shaped
+    /// card (name→displayName, description→bio, "City, Country"→region) so
+    /// they render everywhere a counterpart card already does. Missing on
+    /// every real person response — nil defaults to "not a community".
+    var kind: String?
 
     var id: String { uid }
+
+    var isCommunity: Bool { kind == "community" }
 
     var displayAge: Int? {
         if let age { return age }
@@ -407,6 +415,7 @@ struct CommunityPostCard: Codable, Equatable, Identifiable {
     var location: String?
     var attendeeCount: Int?
     var myRsvp: Bool?
+    var commentCount: Int?
     var createdAt: String?
 
     var id: String { postId }
@@ -536,6 +545,85 @@ struct CommunityMember: Codable, Equatable, Identifiable {
 /// GET /api/communities/{cid}/members
 struct CommunityMembersResponse: Decodable {
     var members: [CommunityMember]?
+}
+
+// MARK: - Comments
+
+/// One comment (or, when `parentId` is set, reply) on a community post.
+/// Author fields are a snapshot taken at creation time, same convention as a
+/// post's communityName/communityLogoUrl.
+struct CommentCard: Codable, Equatable, Identifiable {
+    var commentId: String
+    var authorUid: String?
+    var authorKind: String? // "person" | "community"
+    var authorName: String?
+    var authorPhotoUrl: String?
+    var text: String?
+    var audioUrl: String?
+    var audioDurationSec: Int?
+    /// nil = a top-level comment; otherwise the top-level comment this
+    /// thread belongs to (replying to a reply is coerced server-side).
+    var parentId: String?
+    var replyCount: Int?
+    var likeCount: Int?
+    var dislikeCount: Int?
+    var myVote: String? // "like" | "dislike" | nil
+    var createdAt: String?
+
+    var id: String { commentId }
+    var isCommunityAuthor: Bool { authorKind == "community" }
+    var isTopLevel: Bool { parentId == nil }
+
+    var authorPhoto: Photo? {
+        authorPhotoUrl.map { Photo(storagePath: "comment-author-\(commentId)", url: $0) }
+    }
+
+    var audioURL: URL? { audioUrl.flatMap(URL.init(string:)) }
+
+    var relativeCreated: String? {
+        guard let createdAt else { return nil }
+        guard let date = Self.isoFormatter.date(from: createdAt) ?? Self.isoFractionalFormatter.date(from: createdAt) else {
+            return nil
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private static let isoFormatter = ISO8601DateFormatter()
+    private static let isoFractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
+/// GET /api/posts/{postId}/comments
+struct CommentsResponse: Decodable {
+    var comments: [CommentCard]?
+}
+
+/// GET /api/posts/{postId}/comments/{commentId}/replies
+struct RepliesResponse: Decodable {
+    var replies: [CommentCard]?
+}
+
+struct CommentIn: Encodable {
+    var text: String?
+    var audioStoragePath: String?
+    var audioDurationSec: Int?
+    var parentId: String?
+}
+
+struct CommentVoteIn: Encodable {
+    var value: String // "like" | "dislike"
+}
+
+/// PUT/DELETE /api/posts/{postId}/comments/{commentId}/vote
+struct CommentVoteResult: Decodable {
+    var likeCount: Int?
+    var dislikeCount: Int?
+    var myVote: String?
 }
 
 struct LastMessage: Codable, Equatable {

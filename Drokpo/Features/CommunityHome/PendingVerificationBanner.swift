@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Shown across every community-account screen while `verification != "verified"`
-/// — the account can still edit everything and upload photos, it just can't
-/// post yet and won't show up publicly (see backend docs/COMMUNITIES.md).
+/// Shown across every community-account screen while `verification != "verified"`.
+/// Registration is open — the community can post and appear in Discover right
+/// away — so this is purely informational about what verification adds: the
+/// checkmark seal, and (per the Discover deck) the ability to like people.
 struct PendingVerificationBanner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -11,7 +12,7 @@ struct PendingVerificationBanner: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Awaiting verification")
                     .font(.subheadline.bold())
-                Text("Complete your profile now — posting unlocks, and you'll appear publicly, once you're verified.")
+                Text("You can post and appear in Discover right away. The verified badge — and liking people from the deck — unlock once your community is approved.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -46,7 +46,10 @@ enum PhotoUploader {
         try await Storage.storage().reference(withPath: storagePath).downloadURL()
     }
 
-    private static func downscaledJPEG(from image: UIImage) -> Data? {
+    /// Shared with MediaUploader (chat photo messages) — same downscale
+    /// rationale as profile/community photos, just not a private detail
+    /// anymore now that another type needs it.
+    static func downscaledJPEG(from image: UIImage) -> Data? {
         // Work in pixels, not points: image.size is in points and the renderer
         // multiplies by its scale, so a screen-scale renderer would upscale a
         // 1600pt canvas to 4800px and blow past the 10MB storage rule limit.

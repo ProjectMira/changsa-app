@@ -5,6 +5,7 @@ struct SignInView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var errorMessage: String?
     @State private var isSigningIn = false
+    @State private var showPhoneSignIn = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +54,18 @@ struct SignInView: View {
                 }
                 .buttonStyle(.bordered)
 
+                Button {
+                    showPhoneSignIn = true
+                } label: {
+                    HStack {
+                        Image(systemName: "phone.fill")
+                        Text("Continue with phone")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                }
+                .buttonStyle(.bordered)
+
                 Text("You must be 18 or older to use Drokpo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -63,6 +76,9 @@ struct SignInView: View {
         }
         .overlay {
             if isSigningIn { ProgressView() }
+        }
+        .sheet(isPresented: $showPhoneSignIn) {
+            PhoneSignInView()
         }
         .alert("Sign-in failed", isPresented: .init(
             get: { errorMessage != nil },

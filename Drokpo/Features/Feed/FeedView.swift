@@ -1,27 +1,39 @@
 import SwiftUI
 
 struct FeedView: View {
+    @Environment(SessionStore.self) private var session
     @State private var model = FeedModel()
     @State private var expandedCard: FeedCard?
     @State private var expandedNews: NewsCard?
     @State private var expandedPost: CommunityPostCard?
+    @State private var showCommunityBrowse = false
     /// Set instead of model.urlToOpen while a detail sheet is up — swapping
     /// two sheets in one transaction is flaky; the Safari sheet presents from
     /// the detail sheet's onDismiss instead.
     @State private var pendingURL: URL?
 
+    private var isUnverifiedCommunity: Bool {
+        session.state == .activeCommunity && session.myCommunity?.isVerified != true
+    }
+
     var body: some View {
         NavigationStack {
-            ZStack {
-                if model.isLoading {
-                    ProgressView()
-                } else if model.deck.isEmpty {
-                    emptyState
-                } else {
-                    deck
+            VStack(spacing: 0) {
+                if isUnverifiedCommunity {
+                    PendingVerificationBanner()
                 }
+                ZStack {
+                    if model.isLoading {
+                        ProgressView()
+                    } else if model.deck.isEmpty {
+                        emptyState
+                    } else {
+                        deck
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) { communityBrowseButton }
             .navigationTitle("Discover")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -118,7 +130,44 @@ struct FeedView: View {
                     Text(model.errorMessage ?? "")
                 }
             }
+            .fullScreenCover(isPresented: $showCommunityBrowse) {
+                communityBrowseCover
+            }
         }
+    }
+
+    /// A person browses joined + suggested communities (the old Communities
+    /// tab, now reachable only from here); a community account browses the
+    /// directory instead — communities don't join communities.
+    @ViewBuilder
+    private var communityBrowseCover: some View {
+        if session.state == .activeCommunity {
+            NavigationStack {
+                CommunityDirectoryView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showCommunityBrowse = false }
+                        }
+                    }
+            }
+        } else {
+            CommunitiesView()
+        }
+    }
+
+    private var communityBrowseButton: some View {
+        Button {
+            showCommunityBrowse = true
+        } label: {
+            Image(systemName: "person.3.fill")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(Circle().fill(.black.opacity(0.35)))
+        }
+        .padding(.leading, 16)
+        .padding(.top, 8)
+        .accessibilityLabel("Browse communities")
     }
 
     /// Presents a link queued by a detail sheet once that sheet is fully
@@ -411,32 +460,6 @@ private struct NewsDetailSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle("News")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-/// Tap-through detail for a community post: full body, poll voting (if a
-/// poll), RSVPing (if an event), and a link CTA (if it has one).
-private struct CommunityPostDetailSheet: View {
-    let post: CommunityPostCard
-    let onVote: (String) -> Void
-    let onRsvp: (Bool) -> Void
-    let onOpenLink: (() -> Void)?
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                CommunityPostContentView(post: post, onVote: onVote, onRsvp: onRsvp, onOpenLink: onOpenLink)
-                    .padding()
-            }
-            .navigationTitle(post.communityName ?? "Community post")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

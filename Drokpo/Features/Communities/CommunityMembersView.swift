@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A community's member list — only reachable from CommunityDetailView once
+/// A community's member list — only reachable from CommunityPageView once
 /// you've joined (the endpoint itself also enforces this: members-only, see
 /// backend docs/COMMUNITIES.md). Slim rows only: name, photo, region — never
 /// the full dating-card view.

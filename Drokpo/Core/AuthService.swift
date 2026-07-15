@@ -66,6 +66,35 @@ enum AuthService {
         try await Auth.auth().signIn(with: credential)
     }
 
+    // MARK: Phone
+
+    /// Kicks off SMS verification for an E.164 number (e.g. "+9779812345678")
+    /// and returns a verification id to pass back into `signInWithPhone`.
+    /// Firebase silently falls back to a reCAPTCHA web view (via the app's
+    /// URL scheme) when APNs silent push verification isn't available —
+    /// DrokpoApp's onOpenURL gives Auth.auth().canHandle(_:) first refusal
+    /// for that round trip.
+    static func startPhoneVerification(_ e164: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            PhoneAuthProvider.provider().verifyPhoneNumber(e164, uiDelegate: nil) { verificationID, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let verificationID {
+                    continuation.resume(returning: verificationID)
+                } else {
+                    continuation.resume(throwing: AuthServiceError.missingToken)
+                }
+            }
+        }
+    }
+
+    static func signInWithPhone(verificationID: String, code: String) async throws {
+        let credential = PhoneAuthProvider.provider().credential(
+            withVerificationID: verificationID, verificationCode: code
+        )
+        try await Auth.auth().signIn(with: credential)
+    }
+
     // MARK: Nonce helpers
 
     private static func randomNonce(length: Int = 32) -> String {

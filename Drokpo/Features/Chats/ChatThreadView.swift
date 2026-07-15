@@ -1,11 +1,24 @@
 import FirebaseFirestore
+import PhotosUI
 import SwiftUI
 
 struct ChatMessage: Identifiable, Equatable {
     let id: String
     let senderId: String
     let text: String
+    let imageUrl: String?
+    let audioUrl: String?
+    let audioDurationSec: Int?
     let createdAt: Date
+
+    var hasMedia: Bool { imageUrl != nil || audioUrl != nil }
+}
+
+/// What the input bar is about to send — a message carries exactly one.
+private enum ChatDraft {
+    case text(String)
+    case photo(UIImage)
+    case voice(url: URL, seconds: Int)
 }
 
 struct ChatThreadView: View {
@@ -16,8 +29,6 @@ struct ChatThreadView: View {
     let matchId: String
 
     @State private var messages: [ChatMessage] = []
-    @State private var draft = ""
-    @State private var isSending = false
     @State private var registration: ListenerRegistration?
     /// Last message id we've sent a read receipt for, so snapshot churn
     /// doesn't spam POST /read.
@@ -26,6 +37,7 @@ struct ChatThreadView: View {
     @State private var showUnmatchConfirm = false
     @State private var showBlockConfirm = false
     @State private var showReportDialog = false
+    @State private var viewingImageURL: URL?
 
     /// The live match entry, looked up by id every render so unread/profile
     /// stay current — and nil during a push deep-link cold start before the
@@ -64,7 +76,9 @@ struct ChatThreadView: View {
                     }
                 }
             }
-            inputBar
+            ChatInputBar { draft in
+                await send(draft)
+            }
         }
         .navigationTitle(entry?.otherUser?.displayName ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
@@ -72,7 +86,11 @@ struct ChatThreadView: View {
             if let other = entry?.otherUser {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
-                        ProfileDetailView(card: other)
+                        if other.isCommunity {
+                            CommunityPageView(cid: other.uid)
+                        } else {
+                            ProfileDetailView(card: other)
+                        }
                     } label: {
                         RemotePhotoView(photo: other.photos?.first)
                             .frame(width: 32, height: 32)
@@ -123,12 +141,43 @@ struct ChatThreadView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .fullScreenCover(item: $viewingImageURL) { url in
+            ChatImageViewer(url: url) { viewingImageURL = nil }
+        }
     }
 
     private func bubble(_ message: ChatMessage) -> some View {
         let isMine = message.senderId == session.uid
         return HStack {
             if isMine { Spacer(minLength: 48) }
+            bubbleContent(message, isMine: isMine)
+            if !isMine { Spacer(minLength: 48) }
+        }
+        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
+    }
+
+    @ViewBuilder
+    private func bubbleContent(_ message: ChatMessage, isMine: Bool) -> some View {
+        if let imageUrl = message.imageUrl, let url = URL(string: imageUrl) {
+            Button {
+                viewingImageURL = url
+            } label: {
+                Color.clear
+                    .frame(width: 220, height: 220)
+                    .overlay { RemotePhotoView(photo: Photo(storagePath: "chat-image-\(message.id)", url: imageUrl)) }
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .clipped()
+            }
+            .buttonStyle(.plain)
+        } else if let audioUrl = message.audioUrl, let url = URL(string: audioUrl) {
+            AudioBubbleView(id: message.id, url: url, durationSec: message.audioDurationSec ?? 0, isOnTintBackground: isMine)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(isMine ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+                )
+        } else {
             Text(message.text)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -137,9 +186,7 @@ struct ChatThreadView: View {
                         .fill(isMine ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
                 )
                 .foregroundStyle(isMine ? .white : .primary)
-            if !isMine { Spacer(minLength: 48) }
         }
-        .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
 
     // MARK: - Timestamps
@@ -197,26 +244,6 @@ struct ChatThreadView: View {
             .frame(maxWidth: .infinity, alignment: isMine ? .trailing : .leading)
     }
 
-    private var inputBar: some View {
-        HStack(spacing: 8) {
-            TextField("Message…", text: $draft, axis: .vertical)
-                .lineLimit(1...4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(.quaternary))
-            Button {
-                Task { await send() }
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
-            }
-            .disabled(isSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
-    }
-
     private func attachListener() {
         guard registration == nil else { return }
         registration = Firestore.firestore()
@@ -239,6 +266,9 @@ struct ChatThreadView: View {
                         id: doc.documentID,
                         senderId: senderId,
                         text: text,
+                        imageUrl: data["imageUrl"] as? String,
+                        audioUrl: data["audioUrl"] as? String,
+                        audioDurationSec: data["audioDurationSec"] as? Int,
                         createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? .now
                     )
                 }
@@ -261,26 +291,43 @@ struct ChatThreadView: View {
         }
     }
 
-    private func send() async {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let uid = session.uid else { return }
-        isSending = true
-        defer { isSending = false }
+    /// Uploads media (if any) then writes the message via direct Firestore
+    /// write — the security rules verify participation, active status, and
+    /// senderId; the on_message_created Cloud Function handles
+    /// lastMessage/unreadCount denormalization and the push. A media
+    /// message's `text` also carries a placeholder ("📷 Photo"/"🎤 Voice
+    /// message") so a build that predates media rendering still shows a
+    /// readable bubble instead of an empty one.
+    private func send(_ draft: ChatDraft) async {
+        guard let uid = session.uid else { return }
         do {
-            // Direct Firestore write — the security rules verify participation,
-            // active status, and senderId; the on_message_created Cloud Function
-            // handles lastMessage/unreadCount denormalization and the push.
+            var data: [String: Any] = [
+                "senderId": uid,
+                "imageUrl": NSNull(),
+                "audioUrl": NSNull(),
+                "audioDurationSec": NSNull(),
+                "createdAt": FieldValue.serverTimestamp(),
+                "readAt": NSNull(),
+            ]
+            switch draft {
+            case .text(let text):
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                data["text"] = trimmed
+            case .photo(let image):
+                let url = try await MediaUploader.uploadChatPhoto(image)
+                data["text"] = "📷 Photo"
+                data["imageUrl"] = url.absoluteString
+            case .voice(let fileURL, let seconds):
+                let url = try await MediaUploader.uploadChatAudio(fileURL)
+                data["text"] = "🎤 Voice message"
+                data["audioUrl"] = url.absoluteString
+                data["audioDurationSec"] = seconds
+            }
             try await Firestore.firestore()
                 .collection("matches").document(matchId)
                 .collection("messages")
-                .addDocument(data: [
-                    "senderId": uid,
-                    "text": text,
-                    "imageUrl": NSNull(),
-                    "createdAt": FieldValue.serverTimestamp(),
-                    "readAt": NSNull(),
-                ])
-            draft = ""
+                .addDocument(data: data)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -318,5 +365,167 @@ struct ChatThreadView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+/// Full-screen tap-through for a chat photo — plain black background,
+/// scaled-to-fit, tap anywhere to dismiss.
+private struct ChatImageViewer: View {
+    let url: URL
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            RemotePhotoView(photo: Photo(storagePath: "chat-image-viewer", url: url.absoluteString))
+                .aspectRatio(contentMode: .fit)
+                .padding()
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .padding()
+        }
+        .onTapGesture { onDismiss() }
+    }
+}
+
+/// Text, photo, or voice — pinned under the message list. Voice recording
+/// mirrors CommentComposerBar's states (idle/recording/preview) with a
+/// longer 120s cap; a photo is picked and sent immediately (no preview step).
+private struct ChatInputBar: View {
+    let onSend: (ChatDraft) async -> Void
+
+    @State private var draft = ""
+    @State private var recorder = AudioRecorder()
+    @State private var recordedFile: (url: URL, seconds: Int)?
+    @State private var photoSelection: PhotosPickerItem?
+    @State private var isSending = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            content
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay { if isSending { ProgressView() } }
+        .onChange(of: photoSelection) {
+            guard let item = photoSelection else { return }
+            photoSelection = nil
+            Task { await sendPhoto(item) }
+        }
+        .alert("Something went wrong", isPresented: .init(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch recorder.state {
+        case .idle:
+            idleContent
+        case .recording(let elapsed):
+            recordingContent(elapsed: elapsed)
+        case .failed(let message):
+            Text(message).font(.caption).foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var idleContent: some View {
+        if let recordedFile {
+            AudioBubbleView(id: "draft-\(recordedFile.url.lastPathComponent)", url: recordedFile.url, durationSec: recordedFile.seconds)
+            Button {
+                try? FileManager.default.removeItem(at: recordedFile.url)
+                self.recordedFile = nil
+            } label: {
+                Image(systemName: "trash").foregroundStyle(.red)
+            }
+            sendButton
+        } else {
+            PhotosPicker(selection: $photoSelection, matching: .images) {
+                Image(systemName: "photo.on.rectangle")
+            }
+            .disabled(isSending)
+            TextField("Message…", text: $draft, axis: .vertical)
+                .lineLimit(1...4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(.quaternary))
+            if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    recorder.start(maxSeconds: 120) { url, seconds in
+                        recordedFile = (url, seconds)
+                    }
+                } label: {
+                    Image(systemName: "mic.fill")
+                }
+                .disabled(isSending)
+            } else {
+                sendButton
+            }
+        }
+    }
+
+    private func recordingContent(elapsed: Int) -> some View {
+        HStack(spacing: 10) {
+            Circle().fill(.red).frame(width: 8, height: 8)
+            Text("\(elapsed)s / 120s").font(.caption.monospacedDigit())
+            Spacer()
+            Button {
+                recorder.cancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            Button {
+                if let result = recorder.stop() {
+                    recordedFile = result
+                }
+            } label: {
+                Image(systemName: "stop.circle.fill").foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var sendButton: some View {
+        Button {
+            Task { await sendCurrentDraft() }
+        } label: {
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 30))
+        }
+        .disabled(isSending)
+    }
+
+    private func sendCurrentDraft() async {
+        isSending = true
+        defer { isSending = false }
+        if let recordedFile {
+            await onSend(.voice(url: recordedFile.url, seconds: recordedFile.seconds))
+            self.recordedFile = nil
+        } else {
+            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            await onSend(.text(text))
+            draft = ""
+        }
+    }
+
+    private func sendPhoto(_ item: PhotosPickerItem) async {
+        isSending = true
+        defer { isSending = false }
+        guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else {
+            errorMessage = "That photo couldn't be loaded — try picking another one."
+            return
+        }
+        await onSend(.photo(image))
     }
 }

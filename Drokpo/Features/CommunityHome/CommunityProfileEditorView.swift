@@ -8,6 +8,7 @@ import SwiftUI
 struct CommunityProfileEditorView: View {
     @Environment(SessionStore.self) private var session
 
+    @State private var showSettings = false
     @State private var name = ""
     @State private var communityDescription = ""
     @State private var website = ""
@@ -153,6 +154,13 @@ struct CommunityProfileEditorView: View {
             .navigationTitle("Community")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     if justSaved {
                         Label("Saved", systemImage: "checkmark")
@@ -165,6 +173,9 @@ struct CommunityProfileEditorView: View {
                             .disabled(saveBlocker != nil)
                     }
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                CommunitySettingsView()
             }
             .overlay { if isWorking { ProgressView() } }
             .task { loadFromSession() }

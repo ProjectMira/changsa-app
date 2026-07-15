@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 import FirebaseCore
 import FirebaseMessaging
 import GoogleSignIn
@@ -42,7 +43,14 @@ struct DrokpoApp: App {
             RootView()
                 .environment(session)
                 .preferredColorScheme(appearance.colorScheme)
-                .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
+                .onOpenURL { url in
+                    // Phone-auth's reCAPTCHA fallback and Google sign-in share
+                    // the same URL scheme (GOOGLE_REVERSED_CLIENT_ID) — give
+                    // Firebase Auth first refusal so its verification flow
+                    // isn't swallowed by GIDSignIn.
+                    if Auth.auth().canHandle(url) { return }
+                    GIDSignIn.sharedInstance.handle(url)
+                }
         }
     }
 }
@@ -69,7 +77,7 @@ struct RootView: View {
                 case .needsCommunityOnboarding:
                     CommunityOnboardingFlow()
                 case .activeCommunity:
-                    CommunityTabView()
+                    MainTabView()
                 case .failed:
                     VStack(spacing: 16) {
                         Text("Couldn't load your profile.")

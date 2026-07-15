@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Renders one community post's content — used both in a community's own
-/// post feed (CommunityDetailView) and, interleaved, in the Discover deck
+/// post feed/page (CommunityPageView, CommunitiesView) and, interleaved, in the Discover deck
 /// (FeedView/CardView) — so the two surfaces stay visually consistent.
 struct CommunityPostContentView: View {
     let post: CommunityPostCard
@@ -13,6 +13,9 @@ struct CommunityPostContentView: View {
     var onRsvp: ((Bool) -> Void)?
     /// Called when the link CTA is tapped; nil hides the button.
     var onOpenLink: (() -> Void)?
+    /// Called when the comment button is tapped; nil hides the button (e.g.
+    /// the compact deck card, where comments live one tap away in the sheet).
+    var onOpenComments: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -41,10 +44,43 @@ struct CommunityPostContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+            if let onOpenComments {
+                commentButton(onOpenComments)
+            }
         }
     }
 
+    private func commentButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.right")
+                Text(post.commentCount.map { $0 > 0 ? "\($0)" : "Comment" } ?? "Comment")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Tappable when the post carries a communityId — every call site
+    /// (CommunitiesView's feed, LikesView's saved-post detail, and
+    /// CommunityPostDetailSheet, which owns its own NavigationStack) sits
+    /// inside a navigation context this can push onto.
+    @ViewBuilder
     private var header: some View {
+        if let cid = post.communityId {
+            NavigationLink {
+                CommunityPageView(cid: cid)
+            } label: {
+                headerContent
+            }
+            .buttonStyle(.plain)
+        } else {
+            headerContent
+        }
+    }
+
+    private var headerContent: some View {
         HStack(spacing: 8) {
             RemotePhotoView(photo: post.communityLogoUrl.map { Photo(storagePath: "logo-\(post.postId)", url: $0) })
                 .frame(width: 28, height: 28)
@@ -53,6 +89,7 @@ struct CommunityPostContentView: View {
                 .font(.subheadline.bold())
             Spacer()
         }
+        .contentShape(Rectangle())
     }
 }
 
@@ -94,6 +131,69 @@ private struct EventDetailsView: View {
             } else {
                 Button("Join") { onRsvp(true) }
                     .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+}
+
+/// Tap-through detail for a community post: full body, poll voting (if a
+/// poll), RSVPing (if an event), a link CTA (if it has one), and — in owner
+/// mode — a publish/unpublish toggle. Shared by the Discover deck
+/// (FeedView) and the community's own page (CommunityPageView) so both
+/// surfaces render a post identically.
+struct CommunityPostDetailSheet: View {
+    let post: CommunityPostCard
+    var ownerMode = false
+    let onVote: ((String) -> Void)?
+    let onRsvp: ((Bool) -> Void)?
+    let onOpenLink: (() -> Void)?
+    var onTogglePublish: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+    @State private var showComments = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    CommunityPostContentView(
+                        post: post, onVote: onVote, onRsvp: onRsvp, onOpenLink: onOpenLink,
+                        onOpenComments: { showComments = true }
+                    )
+                    if ownerMode {
+                        ownerControls
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle(post.communityName ?? "Community post")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showComments) {
+                CommentsSheet(post: post)
+                    .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var ownerControls: some View {
+        Divider()
+        VStack(alignment: .leading, spacing: 8) {
+            if post.active == false {
+                Label("Unpublished — only you can see this", systemImage: "eye.slash")
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+            }
+            if let onTogglePublish {
+                Button(post.active == false ? "Republish" : "Unpublish") {
+                    onTogglePublish()
+                }
+                .buttonStyle(.bordered)
+                .tint(post.active == false ? .green : .orange)
             }
         }
     }

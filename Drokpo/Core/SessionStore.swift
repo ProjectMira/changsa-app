@@ -22,8 +22,12 @@ final class SessionStore {
     /// queries and unread counts.
     var uid: String? { Auth.auth().currentUser?.uid }
 
-    /// Email of the signed-in account (nil for providers that hide it).
+    /// Email of the signed-in account (nil for providers that hide it, or
+    /// for a phone sign-in).
     var email: String? { Auth.auth().currentUser?.email }
+
+    /// Phone number of the signed-in account (only set for phone sign-in).
+    var phone: String? { Auth.auth().currentUser?.phoneNumber }
 
     private var authListener: AuthStateDidChangeListenerHandle?
 
@@ -66,6 +70,10 @@ final class SessionStore {
                 myProfile = nil
                 myCommunity = account.community
                 state = .activeCommunity
+                // Communities now match/chat as themselves too, so they need
+                // "someone liked you"/"new match"/"new message" pushes same as
+                // a person.
+                PushService.shared.enable()
             default:
                 myProfile = nil
                 myCommunity = nil

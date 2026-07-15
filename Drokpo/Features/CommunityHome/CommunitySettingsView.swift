@@ -46,7 +46,7 @@ struct CommunitySettingsView: View {
                     HStack {
                         Text("Signed in as")
                         Spacer()
-                        Text(session.email ?? "—").foregroundStyle(.secondary)
+                        Text(session.email ?? session.phone ?? "—").foregroundStyle(.secondary)
                     }
                     Button("Sign out") { session.signOut() }
                     Button("Delete community", role: .destructive) {

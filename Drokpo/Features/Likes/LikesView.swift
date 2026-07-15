@@ -144,10 +144,14 @@ struct LikesView: View {
         List(received) { entry in
             if let card = entry.otherUser {
                 NavigationLink {
-                    ProfileDetailView(
-                        card: card,
-                        context: .likedYou(onLikeBack: { await likeBack(card) })
-                    )
+                    if card.isCommunity {
+                        CommunityPageView(cid: card.uid)
+                    } else {
+                        ProfileDetailView(
+                            card: card,
+                            context: .likedYou(onLikeBack: { await likeBack(card) })
+                        )
+                    }
                 } label: {
                     LikeRow(card: card, showLikeBack: true) {
                         Task { await likeBackFromRow(card) }
@@ -173,7 +177,11 @@ struct LikesView: View {
         case .person(let swipe):
             if let card = swipe.otherUser {
                 NavigationLink {
-                    ProfileDetailView(card: card)
+                    if card.isCommunity {
+                        CommunityPageView(cid: card.uid)
+                    } else {
+                        ProfileDetailView(card: card)
+                    }
                 } label: {
                     LikeRow(card: card, showLikeBack: false) {}
                 }
@@ -376,18 +384,25 @@ private struct LikedPostDetailView: View {
     let post: CommunityPostCard
     let onOpenLink: () -> Void
 
+    @State private var showComments = false
+
     var body: some View {
         ScrollView {
             CommunityPostContentView(
                 post: post,
                 onVote: nil,
                 onRsvp: nil,
-                onOpenLink: post.url != nil ? onOpenLink : nil
+                onOpenLink: post.url != nil ? onOpenLink : nil,
+                onOpenComments: { showComments = true }
             )
             .padding()
         }
         .navigationTitle(post.communityName ?? "Saved post")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showComments) {
+            CommentsSheet(post: post)
+                .presentationDetents([.medium, .large])
+        }
     }
 }
 
@@ -414,7 +429,14 @@ private struct LikeRow: View {
                         Text("\(age)").foregroundStyle(.secondary)
                     }
                 }
-                if let region = card.region {
+                if card.isCommunity {
+                    Text("Community")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.tint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                } else if let region = card.region {
                     Text(region)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

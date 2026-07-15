@@ -1,19 +1,24 @@
 import SwiftUI
 
-/// The Communities tab for person accounts, YouTube-style: the communities
+/// Person accounts' community browsing screen, YouTube-style: the communities
 /// you've joined as an avatar rail up top, and below it a single feed of
 /// their posts with sponsored cards mixed in (GET /api/communities/home).
 /// Discovering new communities lives behind the toolbar button (and inline
-/// while you haven't joined any yet).
+/// while you haven't joined any yet). Reached from a button overlaid on the
+/// Discover deck (there's no dedicated Communities tab for persons) and
+/// presented as a full-screen cover, hence the explicit Close button.
 struct CommunitiesView: View {
+    @Environment(\.dismiss) private var dismiss
     @State private var mine: [CommunityProfile] = []
     @State private var items: [FeedItem] = []
-    /// Verified communities to suggest — only fetched while `mine` is empty.
+    /// Communities to suggest (any registration state — verification is a
+    /// badge, not a visibility gate) — only fetched while `mine` is empty.
     @State private var discover: [CommunityProfile] = []
     @State private var isLoading = true
     @State private var hasLoaded = false
     @State private var errorMessage: String?
     @State private var urlToOpen: URL?
+    @State private var commentsPost: CommunityPostCard?
 
     var body: some View {
         NavigationStack {
@@ -28,6 +33,9 @@ struct CommunitiesView: View {
             .listStyle(.plain)
             .navigationTitle("Communities")
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         CommunityDirectoryView()
@@ -45,6 +53,10 @@ struct CommunitiesView: View {
             .onAppear { if hasLoaded { Task { await load() } } }
             .sheet(item: $urlToOpen) { url in
                 SafariView(url: url)
+            }
+            .sheet(item: $commentsPost) { post in
+                CommentsSheet(post: post)
+                    .presentationDetents([.medium, .large])
             }
             .alert("Something went wrong", isPresented: .init(
                 get: { errorMessage != nil },
@@ -66,7 +78,7 @@ struct CommunitiesView: View {
                 HStack(spacing: 16) {
                     ForEach(mine) { community in
                         NavigationLink {
-                            CommunityDetailView(cid: community.id, preview: community)
+                            CommunityPageView(cid: community.id, preview: community)
                         } label: {
                             JoinedCommunityAvatar(community: community)
                         }
@@ -92,7 +104,7 @@ struct CommunitiesView: View {
                     HStack(spacing: 12) {
                         ForEach(discover) { community in
                             NavigationLink {
-                                CommunityDetailView(cid: community.id, preview: community)
+                                CommunityPageView(cid: community.id, preview: community)
                             } label: {
                                 DiscoverCommunityCard(community: community)
                             }
@@ -134,7 +146,8 @@ struct CommunitiesView: View {
                 post: post,
                 onVote: post.kind == "poll" ? { optionId in Task { await vote(post, optionId: optionId) } } : nil,
                 onRsvp: post.kind == "event" ? { going in Task { await rsvp(post, going: going) } } : nil,
-                onOpenLink: post.url != nil ? { openLink(post.url!, clickPath: "posts/\(post.postId)") } : nil
+                onOpenLink: post.url != nil ? { openLink(post.url!, clickPath: "posts/\(post.postId)") } : nil,
+                onOpenComments: { commentsPost = post }
             )
             .padding(.vertical, 6)
         case .ad(let ad):
@@ -259,7 +272,8 @@ private struct SponsoredFeedRow: View {
     }
 }
 
-/// Full "see all" list of verified communities, with join/leave inline.
+/// Full "see all" list of communities (any registration state), with
+/// join/leave inline.
 struct CommunityDirectoryView: View {
     @State private var communities: [CommunityProfile] = []
     @State private var isLoading = true
@@ -273,12 +287,12 @@ struct CommunityDirectoryView: View {
                 ContentUnavailableView(
                     "No communities yet",
                     systemImage: "person.3",
-                    description: Text("Verified communities will show up here.")
+                    description: Text("Communities will show up here as they're created.")
                 )
             } else {
                 ForEach(communities) { community in
                     NavigationLink {
-                        CommunityDetailView(cid: community.id, preview: community)
+                        CommunityPageView(cid: community.id, preview: community)
                     } label: {
                         HStack {
                             CommunityRow(community: community)
